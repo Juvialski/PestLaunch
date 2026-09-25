@@ -595,7 +595,43 @@ After the merge, `AGENTS.md` was also updated to prefer one bounded real local p
 ### Remaining notes and readiness
 
 - The controlled browser did not open its native file chooser; upload was verified through the same deployed ingestion endpoint used by the UI. The hosted process, analysis, proposal, approval, mutation, and post-refresh persistence were verified in the UI.
-- The new call's optional `caller_name` was empty, so the inbox labels it `Unassigned call`; its persisted `demo_customer_id` and detail view correctly link it to Jordan. Enter `Jordan Example` in the optional caller-name field during a UI rehearsal to give the inbox row a clearer label.
+- The saved call has an empty optional `caller_name` and a valid `demo_customer_id`. UI-R1 uses the linked synthetic customer's name in the inbox and detail header when the caller name is blank; a call with neither name nor customer link remains `Unassigned call`. Stored call data is unchanged.
 - The first inbox load showed its retryable load error once; **Try again** loaded the existing calls, and the post-processing refresh loaded normally.
 - No database migration was created or applied, and `supabase db push` was not run.
 - P1, P2, and P3 remain complete. P4 is now interview-ready. Recommended state: feature freeze and interview rehearsal.
+
+## 18. UI-R1 — Loom-guided interview demo UI overhaul — 2026-09-25
+
+### Scope and reference
+
+- Starting `origin/main`: `94b59150d49994cfc8289deaff0fdfbe71a2aa36`.
+- Reference Loom: https://www.loom.com/share/a58559d925244c279c1b8bbaee437dba
+- Scope is frontend presentation of the verified interview workflow. P5 and backend/product expansion remain deferred.
+- The Loom's visible client-list screen uses a persistent light navigation rail, one clear page title, compact white work rows, restrained borders, and direct primary actions. UI-R1 adapts the hierarchy and density to one call inbox and a selected-call workspace; it does not copy the multi-client navigation or financial/consulting modules.
+
+### Main UI changes
+
+- Replaced the leaf placeholder with the supplied PestLaunch logo and removed the Interview demo header badge.
+- Reframed the landing view as a call inbox beside a selected-call review workspace.
+- Made recording upload a deliberate, collapsible four-step flow with clear optional caller/customer fields and a visible linked-customer summary.
+- When `caller_name` is blank, the linked synthetic customer's name now labels the inbox row and call detail. Calls without either remain unassigned.
+- Added a call workflow progress strip, more prominent analysis summary and signal badges, separate transcript and evidence panels, and a distinct deterministic action/approval panel.
+- Made approval state, persisted action result, current customer state, and activity timeline visible as separate parts of the reviewed call.
+- Refined loading, retryable error, empty-list, and responsive layout treatments without changing processing or action handlers.
+
+### Behavior and validation
+
+- Backend behavior: unchanged. Gemini routing, analysis schemas, deterministic proposals, approval rules, API endpoints, idempotency, customer mutations, and persisted timeline were not modified.
+- Database: no migration; `supabase db push` was not run.
+- `npx tsc -p tsconfig.app.json --noEmit --pretty false`: passed.
+- `npm test`: 53 passed, 0 failed.
+- `npm run lint`: passed.
+- `npm run build`: passed.
+- Built app inspected in Codex's in-app browser at `http://localhost:3000/`. The verified call `53d0f8b5-e520-42fb-9c0a-a64fa1212cdd` was opened read-only; the existing `NEEDS_REVIEW` call was also inspected without retrying it. No Process, Retry, Approve, or Reset action was triggered.
+- The Loom was opened, played, and scrubbed in Codex's in-app browser; its public preview frame was visually inspected and its transcript used only as supporting context.
+
+### Remaining visual limits
+
+- Codex browser `Page.captureScreenshot` timed out on Loom, the deployed app, and localhost. No browser screenshots could be captured. Browser-rendered accessibility state was checked for the selected analyzed call, upload form, and `NEEDS_REVIEW` state.
+- Pixel-level certification at 1440×900, 1366×768, and 1280px, and a mobile screenshot check remain unavailable in this environment.
+- The inbox summary endpoint does not carry per-call classification or priority. Those details appear in the selected-call workspace without adding backend requests or changing the endpoint.

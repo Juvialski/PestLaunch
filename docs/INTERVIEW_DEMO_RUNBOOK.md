@@ -29,6 +29,18 @@
 
 Reset only restores the three fixed synthetic customer starting values. It keeps calls and action history. Start each rehearsal with a fresh upload so the prior call's action remains immutable.
 
+## UI-R1 presentation walkthrough
+
+The call inbox and selected-call review now share one workspace. Open the analyzed backup `53d0f8b5-e520-42fb-9c0a-a64fa1212cdd` read-only, then point out:
+
+1. The inbox row shows Jordan using the linked synthetic customer name, even though the optional caller-name field is blank.
+2. The selected call header shows `COMPLAINT`, `HIGH` priority, cancellation risk, and analyzed status.
+3. The progress strip follows the call from recording through transcript, AI insights, human review, and outcome.
+4. The AI summary and signal badges are separate from the source transcript and its supporting evidence quotes.
+5. The recommended action is labeled deterministic. Its completed state, recorded customer result, current customer health, and persisted timeline remain visible together.
+
+For a fresh recording, use **Add recording**. Choose audio, optionally enter the caller name, link a synthetic customer if applicable, and upload. Blank caller names use the linked customer name; without a customer link the inbox says **Unassigned call**. Select the new call and click **Process call** once. Only approve or reject the newly proposed action during the live walkthrough; the backup call is already complete.
+
 ## Backup path
 
 If live Gemini processing fails during the interview, open the verified call `53d0f8b5-e520-42fb-9c0a-a64fa1212cdd`, state briefly that the live model service is unavailable, and show its persisted transcript, analysis, evidence, completed retention action, and activity timeline. This backup has already been approved and executed; do not click **Process call** or **Approve** again. Use persisted application data; do not invent or manually seed model results. If synthetic data was reset immediately before taking the backup path, Jordan may show `HEALTHY` because reset preserves call/action history but restores customer fields; describe the saved timeline as the completed historical action in that case.
