@@ -6,9 +6,9 @@ import type {
   CallSummary,
   CallTranscriptRow,
 } from "./shared/calls.js";
-import type { AgentActionRow, DemoCustomer } from "./shared/actions.js";
+import type { AgentActionRow, CallActionPolicyState, DemoCustomer } from "./shared/actions.js";
 import { buildCallTimeline } from "./shared/actionTimeline.js";
-import { buildCallWorkflowSteps } from "./shared/callWorkflowProgress.js";
+import { buildCallWorkflowSteps, shouldShowProposalAction } from "./shared/callWorkflowProgress.js";
 import { AUDIO_PLAYBACK_ERROR, visibleCallError } from "./shared/callErrorFeedback.js";
 import { MAX_AUDIO_UPLOAD_BYTES } from "./shared/calls.js";
 
@@ -26,6 +26,7 @@ type CallDetailPayload = {
   analysis: CallAnalysisRow | null;
   demoCustomer: DemoCustomer | null;
   actions: AgentActionRow[];
+  actionPolicyState: CallActionPolicyState;
 };
 type ApiPayload = {
   calls?: CallSummary[];
@@ -35,6 +36,7 @@ type ApiPayload = {
   analysis?: CallAnalysisRow | null;
   demoCustomer?: DemoCustomer | null;
   actions?: AgentActionRow[];
+  actionPolicyState?: CallActionPolicyState;
   action?: AgentActionRow | null;
   reason?: string;
   error?: ApiErrorResponse["error"];
@@ -61,6 +63,7 @@ async function fetchCallDetail(callId: string): Promise<CallDetailPayload> {
     analysis: payload.analysis ?? null,
     demoCustomer: payload.demoCustomer ?? null,
     actions: payload.actions ?? [],
+    actionPolicyState: payload.actionPolicyState ?? "NOT_READY",
   };
 }
 
@@ -97,7 +100,6 @@ export default function App() {
   const [processError, setProcessError] = useState<string | null>(null);
   const [actionRequestState, setActionRequestState] = useState<ActionRequestState>("idle");
   const [actionRequestError, setActionRequestError] = useState<string | null>(null);
-  const [actionRequestNotice, setActionRequestNotice] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const detailRequestRef = useRef(0);
   const selectedCallIdRef = useRef<string | null>(null);
@@ -167,18 +169,24 @@ export default function App() {
     if (actionRequestState !== "idle") return;
     setActionRequestState(state);
     setActionRequestError(null);
-    setActionRequestNotice(null);
+    let noActionRequired = false;
     try {
       const response = await fetch(url, { method: "POST" });
       const payload = (await response.json()) as ApiPayload;
       if (!response.ok) throw new Error(payload.error?.message ?? "The action request could not be completed.");
       if (payload.reason === "NO_PERMITTED_ACTION") {
-        setActionRequestNotice("No deterministic action applies to this validated analysis.");
+        const hasSavedAction = Boolean(callId && callDetail?.call.id === callId && callDetail.actions.length > 0);
+        if (!hasSavedAction) noActionRequired = true;
+        if (!hasSavedAction && callId && selectedCallIdRef.current === callId) {
+          setCallDetail((current) => current?.call.id === callId
+            ? { ...current, actionPolicyState: "NO_ACTION_REQUIRED" }
+            : current);
+        }
       }
     } catch (error) {
       setActionRequestError(error instanceof Error ? error.message : "The action request could not be completed.");
     } finally {
-      if (callId && selectedCallIdRef.current === callId) await loadCallDetail(callId);
+      if (!noActionRequired && callId && selectedCallIdRef.current === callId) await loadCallDetail(callId);
       setActionRequestState("idle");
     }
   };
@@ -209,7 +217,6 @@ export default function App() {
     setProcessState("idle");
     setProcessError(null);
     setActionRequestError(null);
-    setActionRequestNotice(null);
     void loadCallDetail(callId);
   };
 
@@ -233,6 +240,7 @@ export default function App() {
           analysis: payload.analysis ?? null,
           demoCustomer: payload.demoCustomer ?? null,
           actions: payload.actions ?? [],
+          actionPolicyState: payload.actionPolicyState ?? "NOT_READY",
         });
       }
       if (!response.ok) {
@@ -378,21 +386,14 @@ export default function App() {
           <span className="brand-mark" aria-hidden="true">
             <img src="/pestlaunch-logo.webp" alt="" />
           </span>
-          <span className="brand-copy">
-            <span className="brand-name">PestLaunch</span>
-            <span className="brand-product">CALL INTELLIGENCE</span>
-          </span>
+          <span className="brand-name">PestLaunch</span>
         </a>
       </header>
 
       <main id="top" className="main-content">
         <section className="page-heading" aria-labelledby="page-title">
           <div className="page-heading-copy">
-            <p className="eyebrow">CALL WORKSPACE</p>
             <h1 id="page-title">Call Intelligence</h1>
-            <p className="page-description">
-              Turn pest-control conversations into clear customer signals and safe follow-up.
-            </p>
           </div>
           <button
             className="primary-button upload-toggle"
@@ -656,7 +657,6 @@ export default function App() {
                   processError={processError}
                   actionRequestState={actionRequestState}
                   actionRequestError={actionRequestError}
-                  actionRequestNotice={actionRequestNotice}
                   onProcess={() => void handleProcessCall()}
                   onPropose={() => void runActionRequest(callDetail.call.id, "proposing", `/api/calls/${callDetail.call.id}/actions/propose`)}
                   onDecision={(actionId, decision) => void runActionRequest(
@@ -684,7 +684,6 @@ function CallDetailWorkspace({
   processError,
   actionRequestState,
   actionRequestError,
-  actionRequestNotice,
   onProcess,
   onPropose,
   onDecision,
@@ -694,12 +693,11 @@ function CallDetailWorkspace({
   processError: string | null;
   actionRequestState: ActionRequestState;
   actionRequestError: string | null;
-  actionRequestNotice: string | null;
   onProcess: () => void;
   onPropose: () => void;
   onDecision: (actionId: string, decision: "approve" | "reject") => void;
 }) {
-  const { call, transcript, analysis, demoCustomer, actions } = detail;
+  const { call, transcript, analysis, demoCustomer, actions, actionPolicyState } = detail;
   const callDisplayName = call.caller_name?.trim() || demoCustomer?.name || "Unassigned call";
   const [audioPlaybackFailedCallId, setAudioPlaybackFailedCallId] = useState<string | null>(null);
   const visibleError = visibleCallError(processError, call.last_error);
@@ -725,7 +723,7 @@ function CallDetailWorkspace({
     hasIntelligence: Boolean(intelligence),
     isBusy,
     needsReview,
-    actionStatuses: actions.map((action) => action.status),
+    actionPolicyState,
   });
 
   return (
@@ -756,12 +754,15 @@ function CallDetailWorkspace({
       <ol className="workflow-progress" aria-label="Call workflow progress">
         {workflowSteps.map((step, index) => (
           <li
-            className={`workflow-step${step.complete ? " is-complete" : ""}${step.active ? " is-active" : ""}${step.attention ? " is-attention" : ""}`}
+            className={`workflow-step${step.complete ? " is-complete" : ""}${step.active ? " is-active" : ""}${step.attention ? " is-attention" : ""}${step.notRequired ? " is-not-required" : ""}`}
             aria-current={step.active || step.attention ? "step" : undefined}
             key={step.label}
           >
-            <span className="workflow-step-index" aria-hidden="true">{step.complete ? "✓" : String(index + 1).padStart(2, "0")}</span>
-            <span className="workflow-step-label">{step.label}</span>
+            <span className="workflow-step-index" aria-hidden="true">{step.notRequired ? "—" : step.complete ? "✓" : String(index + 1).padStart(2, "0")}</span>
+            <span className="workflow-step-content">
+              <span className="workflow-step-label">{step.label}</span>
+              {step.notRequired && <span className="workflow-step-state">Not required</span>}
+            </span>
           </li>
         ))}
       </ol>
@@ -849,14 +850,24 @@ function CallDetailWorkspace({
             <p className="detail-muted">A follow-up proposal can be reviewed after the call has validated intelligence.</p>
             <span className="approval-boundary">Customer state never changes without human approval.</span>
           </div>
-        ) : actions.length === 0 ? (
+        ) : actionPolicyState === "NO_ACTION_REQUIRED" ? (
+          <div className="no-action-outcome" role="status">
+            <span className="field-label">Workflow complete</span>
+            <h4>No follow-up action required</h4>
+            <p>
+              {intelligence.outcome === "RESOLVED" && !intelligence.signals.followUpRequired
+                ? "Resolved during the call. Deterministic policy found no follow-up action requiring approval."
+                : "Deterministic policy found no permitted follow-up action for this validated analysis."}
+            </p>
+          </div>
+        ) : actions.length === 0 && shouldShowProposalAction(actionPolicyState) ? (
           <div className="agent-proposal-empty">
             <p className="detail-muted">No deterministic proposal is saved for this call yet.</p>
             <button className="secondary-button" type="button" onClick={onPropose} disabled={isActionBusy}>
               {actionRequestState === "proposing" ? <><span className="spinner" aria-hidden="true" /> Creating proposal</> : "Generate action proposal"}
             </button>
           </div>
-        ) : (
+        ) : actions.length > 0 ? (
           <div className="agent-action-list">
             {actions.map((action) => {
               const isPending = action.status === "PENDING";
@@ -915,21 +926,26 @@ function CallDetailWorkspace({
               );
             })}
           </div>
+        ) : (
+          <div className="agent-proposal-empty">
+            <p className="detail-muted">No action decision is available for this call yet.</p>
+          </div>
         )}
         {actionRequestError && <p className="action-result is-error" role="alert">{actionRequestError}</p>}
-        {actionRequestNotice && <p className="process-status" role="status">{actionRequestNotice}</p>}
-        <div className="demo-customer-state">
-          <div className="customer-state-heading">
-            <span className="field-label">Current customer state</span>
-            {demoCustomer && <span className={`health-pill health-${(demoCustomer.health_status ?? "unknown").toLowerCase().replaceAll("_", "-")}`}>{formatStatus(demoCustomer.health_status ?? "UNKNOWN")}</span>}
+        {(demoCustomer || actions.length > 0) && (
+          <div className="demo-customer-state">
+            <div className="customer-state-heading">
+              <span className="field-label">Current customer state</span>
+              {demoCustomer && <span className={`health-pill health-${(demoCustomer.health_status ?? "unknown").toLowerCase().replaceAll("_", "-")}`}>{formatStatus(demoCustomer.health_status ?? "UNKNOWN")}</span>}
+            </div>
+            {demoCustomer ? (
+              <>
+                <strong>{demoCustomer.name}</strong>
+                <span>Pipeline · {formatStatus(demoCustomer.pipeline_stage ?? "UNKNOWN")}</span>
+              </>
+            ) : <p className="detail-muted">No linked demo customer. Approved follow-ups still appear as completed action tasks.</p>}
           </div>
-          {demoCustomer ? (
-            <>
-              <strong>{demoCustomer.name}</strong>
-              <span>Pipeline · {formatStatus(demoCustomer.pipeline_stage ?? "UNKNOWN")}</span>
-            </>
-          ) : <p className="detail-muted">No linked demo customer. Approved follow-ups still appear as completed action tasks.</p>}
-        </div>
+        )}
       </section>
 
       <section className="detail-panel transcript-panel" aria-labelledby="transcript-title">

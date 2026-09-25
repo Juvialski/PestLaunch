@@ -320,6 +320,7 @@ test("proposal uses persisted analysis and repeats return one pending action wit
   assert.equal(detail.body.demoCustomer.id, DEMO_CUSTOMER_IDS.retention);
   assert.equal(detail.body.actions.length, 1);
   assert.equal(detail.body.actions[0].status, "PENDING");
+  assert.equal(detail.body.actionPolicyState, "PENDING_ACTION");
   assert.deepEqual(ai.calls, { transcribe: 0, analyze: 0 });
 });
 
@@ -388,8 +389,35 @@ test("missing analysis is rejected and irrelevant validated analysis returns no 
   const noAction = await propose(createTestApp(noActionMemory.supabase, noActionAi.ai));
   assert.equal(noAction.status, 200);
   assert.equal(noAction.body.action, null);
+  assert.equal(noAction.body.reason, "NO_PERMITTED_ACTION");
   assert.equal(noActionMemory.state.actions.length, 0);
+  const noActionDetail = await request(createTestApp(noActionMemory.supabase, noActionAi.ai)).get(`/api/calls/${CALL_ID}`);
+  assert.equal(noActionDetail.status, 200);
+  assert.equal(noActionDetail.body.actionPolicyState, "NO_ACTION_REQUIRED");
+  assert.equal(noActionDetail.body.actions.length, 0);
   assert.deepEqual(noActionAi.calls, { transcribe: 0, analyze: 0 });
+});
+
+test("call detail reports a server-derived available action before a proposal is saved", async () => {
+  const memory = makeMemory({ customers: [withCustomer()] });
+  const ai = createAiSpy();
+  const detail = await request(createTestApp(memory.supabase, ai.ai)).get(`/api/calls/${CALL_ID}`);
+
+  assert.equal(detail.status, 200);
+  assert.equal(detail.body.actionPolicyState, "ACTION_AVAILABLE");
+  assert.deepEqual(detail.body.actions, []);
+  assert.deepEqual(ai.calls, { transcribe: 0, analyze: 0 });
+});
+
+test("call detail does not derive policy from analysis whose evidence is not grounded", async () => {
+  const memory = makeMemory({ customers: [withCustomer()] });
+  memory.state.transcripts[0]!.text = "A transcript with no matching evidence.";
+  const ai = createAiSpy();
+  const detail = await request(createTestApp(memory.supabase, ai.ai)).get(`/api/calls/${CALL_ID}`);
+
+  assert.equal(detail.status, 200);
+  assert.equal(detail.body.analysis, null);
+  assert.equal(detail.body.actionPolicyState, "NOT_READY");
 });
 
 test("approval is required before retention mutation and completion preserves its audit timestamps", async () => {
@@ -411,6 +439,8 @@ test("approval is required before retention mutation and completion preserves it
   assert.ok(approved.body.action.payload_json.execution.completedAt);
   assert.equal(memory.state.customers[0]?.health_status, "AT_RISK");
   assert.equal(memory.state.customerMutations, 1);
+  const detail = await request(app).get(`/api/calls/${CALL_ID}`);
+  assert.equal(detail.body.actionPolicyState, "COMPLETED_ACTION");
   assert.deepEqual(ai.calls, { transcribe: 0, analyze: 0 });
 });
 
@@ -489,6 +519,8 @@ test("rejection is idempotent, records a timestamp, and can never execute", asyn
   assert.equal(memory.state.customers[0]?.health_status, "HEALTHY");
   assert.equal(memory.state.customerMutations, 0);
   assert.equal(memory.state.actions[0]?.status, "REJECTED");
+  const detail = await request(app).get(`/api/calls/${CALL_ID}`);
+  assert.equal(detail.body.actionPolicyState, "REJECTED_ACTION");
 });
 
 test("arbitrary client action types and customer patches are rejected", async () => {
