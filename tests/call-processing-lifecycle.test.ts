@@ -3,7 +3,9 @@ import test from "node:test";
 import {
   CallProcessingCoordinator,
   mapCallProcessingProgress,
+  pollBelongsToSelectionGeneration,
   pollCallUntilTerminal,
+  shouldProposeAfterProcessing,
 } from "../src/shared/callProcessingLifecycle.js";
 import type { CallStatus } from "../src/shared/calls.js";
 
@@ -52,6 +54,20 @@ test("page load never auto-processes a historical UPLOADED call", async () => {
 
   assert.deepEqual(result, { started: false, reason: "page_load_does_not_process" });
   assert.equal(requests, 0);
+});
+
+test("an explicit processing request continues the proposal after selection changes, while page load never proposes", () => {
+  assert.equal(shouldProposeAfterProcessing("fresh-upload"), true);
+  assert.equal(shouldProposeAfterProcessing("manual-recovery"), true);
+  assert.equal(shouldProposeAfterProcessing("page-load"), false);
+});
+
+test("a process attempt cannot stop a poll created for a newer selection generation", () => {
+  const activePoll = { callId: CALL_ID, selectionGeneration: 3 };
+
+  assert.equal(pollBelongsToSelectionGeneration(activePoll, CALL_ID, 3), true);
+  assert.equal(pollBelongsToSelectionGeneration(activePoll, CALL_ID, 4), false);
+  assert.equal(pollBelongsToSelectionGeneration(activePoll, "different-call", 3), false);
 });
 
 test("an analyzed call cannot be restarted as an upload or recovery", async () => {

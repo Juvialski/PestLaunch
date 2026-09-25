@@ -7,6 +7,18 @@ export type ProcessStartResult<T> = { started: true; value: T } | { started: fal
 
 type ProcessableCall = { id: string; status: CallStatus };
 
+export function shouldProposeAfterProcessing(trigger: ProcessTrigger): boolean {
+  return trigger !== "page-load";
+}
+
+export function pollBelongsToSelectionGeneration(
+  poll: { callId: string; selectionGeneration: number },
+  callId: string,
+  selectionGeneration: number,
+): boolean {
+  return poll.callId === callId && poll.selectionGeneration === selectionGeneration;
+}
+
 const MANUALLY_PROCESSABLE_STATUSES = new Set<CallStatus>(["UPLOADED", "FAILED", "NEEDS_REVIEW"]);
 
 export class CallProcessingCoordinator {

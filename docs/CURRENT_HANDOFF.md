@@ -753,9 +753,9 @@ After the merge, `AGENTS.md` was also updated to prefer one bounded real local p
 
 - Starting `origin/main`: `756f8b54643a25d1b6b8784ced6cb1217858a7ea` (ALERT-R1). Implementation branch: `codex/final-r1-automatic-processing`.
 - A successful upload selects the returned call and starts the existing `POST /api/calls/:id/process` once. The upload endpoint remains a persistence boundary; Gemini processing is not moved into multipart ingestion.
-- Processing requests are coordinated per call. Reopening an analyzed call does not process it; historical `UPLOADED` calls are not auto-processed on page load. Manual processing/retry remains for `UPLOADED`, `FAILED`, and `NEEDS_REVIEW` recovery.
+- Processing requests are coordinated per call. Reopening an analyzed call does not process it; historical `UPLOADED` calls are not auto-processed on page load. Manual processing/retry remains for `UPLOADED`, `FAILED`, and `NEEDS_REVIEW` recovery. A fresh-upload or explicit recovery request continues the deterministic proposal/no-action step even if the user changes the selected call while processing.
 - The shared progress UI maps persisted call, transcript, analysis, and action-policy state to stage labels. `UPLOADED` shows the saved recording while processing starts; `PROCESSING` without a transcript shows transcription; `TRANSCRIBED` shows analysis; saved analysis with unresolved workflow shows workflow rules; resolved action/no-action state becomes a compact Ready for review message. FAILED and NEEDS_REVIEW show that the recording is saved and expose retry where the existing endpoint permits it.
-- While processing is pending, the browser performs sequential read-only `GET /api/calls/:id` polls at 1.5-second intervals, bounded to 120 attempts. Polling stops at terminal status, on call selection/unmount, or after the bound. Polling never invokes Gemini, sends email, proposes an action, or executes one.
+- While processing is pending, the browser performs sequential read-only `GET /api/calls/:id` polls at 1.5-second intervals, bounded to 120 attempts. Polls carry the selected-call generation so a stale request cannot cancel a newer view. Polling stops at terminal status, on call selection/unmount, or after the bound. A transient/timeout notice offers a read-only Refresh status action, and FAILED/NEEDS_REVIEW identifies the stage needing attention. Polling never invokes Gemini, sends email, proposes an action, or executes one.
 
 ### Call-detail presentation
 
@@ -772,7 +772,7 @@ After the merge, `AGENTS.md` was also updated to prefer one bounded real local p
 
 ### Validation
 
-- `npm test` — 93 passed, 0 failed.
+- `npm test` — 95 passed, 0 failed.
 - `npm run lint` — passed.
 - `npm run build` — passed, including app/server/test type checks and Vite production build.
 - Gemini calls: 0. Brevo sends: 0. Database migration: none. Jev: not integrated.

@@ -13,16 +13,20 @@ export function CallProcessingProgress({
   progress,
   callStatus,
   errorMessage,
+  progressNotice,
   canRetry,
   forceAttention = false,
   onRetry,
+  onRefreshStatus,
 }: {
   progress: Progress;
   callStatus: CallStatus;
   errorMessage: string | null;
+  progressNotice: string | null;
   canRetry: boolean;
   forceAttention?: boolean;
   onRetry: () => void;
+  onRefreshStatus: () => void;
 }) {
   if (progress.mode === "idle" && !forceAttention) return null;
 
@@ -39,6 +43,8 @@ export function CallProcessingProgress({
   }
 
   if (progress.mode === "attention" || forceAttention) {
+    const attentionStage = progress.errorStage ?? progress.active;
+    const attentionStageLabel = STAGES.find((stage) => stage.id === attentionStage)?.label;
     return (
       <section className="processing-progress processing-progress-attention" aria-label="Call processing needs attention" role="alert">
         <div className="processing-attention-recording">
@@ -53,12 +59,19 @@ export function CallProcessingProgress({
           <div>
             <strong>Processing needs attention</strong>
             <span>{errorMessage ?? "The saved call needs review before processing can continue."}</span>
+            {attentionStageLabel && <span>Stage needing attention: {attentionStageLabel}.</span>}
           </div>
         </div>
         {canRetry && (
           <button className="primary-button processing-retry-button" type="button" onClick={onRetry}>
             Retry processing
           </button>
+        )}
+        {progressNotice && (
+          <div className="processing-poll-notice" role="status">
+            <span>{progressNotice}</span>
+            <button className="secondary-button" type="button" onClick={onRefreshStatus}>Refresh status</button>
+          </div>
         )}
       </section>
     );
@@ -96,6 +109,12 @@ export function CallProcessingProgress({
         <div className="processing-start-message">
           <span className="spinner" aria-hidden="true" />
           <span>Processing is starting.</span>
+        </div>
+      )}
+      {progressNotice && (
+        <div className="processing-poll-notice" role="status">
+          <span>{progressNotice}</span>
+          <button className="secondary-button" type="button" onClick={onRefreshStatus}>Refresh status</button>
         </div>
       )}
       <p className="processing-progress-announcement" role="status" aria-live="polite">{announcement}</p>
