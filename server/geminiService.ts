@@ -45,7 +45,7 @@ export function createGeminiService(
         // The app accepts recordings up to 25 MiB, well below the Gemini Interactions
         // inline-data limit. Sending transient audio inline avoids an unnecessary Files
         // API round trip and its separate upload endpoint.
-        const inlineAudio = audio.toString("base64");
+        const inlineAudio = geminiInlineAudio(audio, mimeType);
         let lastCategory: AiFailureCategory = "INVALID_OUTPUT";
 
         for (let index = 0; index < GEMINI_MODELS.transcription.length; index += 1) {
@@ -57,7 +57,7 @@ export function createGeminiService(
               model === GEMINI_MODELS.transcription[0]
                 ? {
                     model,
-                    input: [{ type: "audio", data: inlineAudio, mime_type: mimeType }],
+                    input: [inlineAudio],
                     generation_config: {
                       transcription_config: {
                         mode: {
@@ -75,7 +75,7 @@ export function createGeminiService(
                         type: "text",
                         text: TRANSCRIPTION_FALLBACK_PROMPT,
                       },
-                      { type: "audio", data: inlineAudio, mime_type: mimeType },
+                      inlineAudio,
                     ],
                     response_format: {
                       type: "text",
@@ -309,6 +309,10 @@ function removeUnsupportedSchemaKeywords(value: unknown): unknown {
 
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+}
+
+export function geminiInlineAudio(audio: Buffer, mimeType: string) {
+  return { type: "audio" as const, data: audio.toString("base64"), mime_type: mimeType };
 }
 
 function categoryFromError(error: unknown): AiFailureCategory {
