@@ -2,7 +2,7 @@
 
 ## Mission
 
-Build the PestLaunch Call Intelligence interview prototype described in `docs/PROTOTYPE_PLAN.md`.
+Build the PestLaunch Call Intelligence interview prototype described in `docs/PROTOTYPE_PLAN.md`. Read `docs/CURRENT_HANDOFF.md` for the latest live repository, Supabase, Render, and next-phase state before implementation.
 
 ## Current priority
 
@@ -32,13 +32,12 @@ The prototype is time-boxed. Do not expand scope without explicit instruction.
 2. Gemini 3.7 Flash
 3. Gemini 3.6 Flash
 4. Gemini 3.5 Flash
-5. Gemini 3.5 Flash Lite only as an optional final low-cost/schema-repair path
 
 Do not hard-code model logic throughout the codebase. Centralize provider/model routing.
 
 ## Engineering rules
 
-- Read `docs/PROTOTYPE_PLAN.md` before implementation.
+- Read `docs/CURRENT_HANDOFF.md` and `docs/PROTOTYPE_PLAN.md` before implementation.
 - Keep secrets server-side.
 - Validate AI structured output before using it.
 - AI analysis may propose actions; deterministic application code controls execution.
@@ -54,4 +53,4 @@ Do not hard-code model logic throughout the codebase. Centralize provider/model 
 
 ## Validation
 
-Use proportional validation focused on the changed surface. Once the main path is working, prioritize end-to-end reliability over broad speculative testing.
+Use proportional validation focused on the changed surface. Once the main path is working, prioritize end-to-end reliability over broad speculative testing. Do not scan `node_modules`, deploy broad final-review subagents, or repeatedly rerun the full validation suite unless a relevant change requires it.
