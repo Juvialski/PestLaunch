@@ -29,15 +29,15 @@ Repository:
 
 `Juvialski/PestLaunch`
 
-Main immediately before P3:
+Current merged main after P3:
 
-`e0a8e5b7321c5226e23640e1f2487873febc00f2`
+`819f71a0750fe123868be37e00d56c96b6508742`
 
-P1 and P2 are merged. P2 was delivered as PR #2, `P2: Gemini transcription and call intelligence`, from `codex/p2-gemini-call-intelligence`.
-P2 head: `c0d701a5c7da02aef98b5c65e9eab13ed3cfa5cb`.
-The merged P2 baseline is `e0a8e5b7321c5226e23640e1f2487873febc00f2`.
+P1, P2, and P3 are merged. P2 was delivered as PR #2, `P2: Gemini transcription and call intelligence`, with merged baseline `e0a8e5b7321c5226e23640e1f2487873febc00f2`.
 
-P3 is implemented on `codex/p3-deterministic-actions` from the merged P2 baseline. It completes deterministic action proposals, human decisions, fixed synthetic demo mutations, and persisted call activity without a new database migration or Gemini calls in P3.
+P3 was delivered as PR #3, `P3: Deterministic actions and human approval`, from `codex/p3-deterministic-actions`. P3 head was `d927bbae93a24b3b51c4f6c1e8a6023a87379734`, and the merged P3 main is `819f71a0750fe123868be37e00d56c96b6508742`. It completes deterministic action proposals, human decisions, fixed synthetic demo mutations, and persisted call activity without a new database migration or Gemini calls in P3.
+
+Open PRs at this handoff: none.
 
 P1 was merged as:
 
