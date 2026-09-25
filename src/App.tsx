@@ -928,6 +928,7 @@ function CallDetailWorkspace({
   const { call, transcript, analysis, demoCustomer, actions, notifications, highRiskAlertConfigured, actionPolicyState } = detail;
   const callDisplayName = call.caller_name?.trim() || demoCustomer?.name || "Unassigned call";
   const [audioPlaybackFailedCallId, setAudioPlaybackFailedCallId] = useState<string | null>(null);
+  const [copyEmailStatus, setCopyEmailStatus] = useState<{ actionId: string; message: string } | null>(null);
   const visibleError = visibleCallError(processError, call.last_error);
   const intelligence = analysis?.analysis_json;
   const canProcess = call.status === "UPLOADED" || call.status === "FAILED" || call.status === "NEEDS_REVIEW";
@@ -960,6 +961,21 @@ function CallDetailWorkspace({
         ["followUpRequired", "Follow-up required"],
       ].filter(([key]) => intelligence.signals[key as keyof typeof intelligence.signals])
     : [];
+
+  const copyCustomerEmail = async (
+    actionId: string,
+    draft: NonNullable<AgentActionRow["payload_json"]["customerCommunication"]>,
+  ) => {
+    try {
+      await navigator.clipboard.writeText(`Subject: ${draft.subject}\n\n${draft.body}`);
+      setCopyEmailStatus({ actionId, message: "Copied" });
+    } catch {
+      setCopyEmailStatus({ actionId, message: "Could not copy email" });
+    }
+    window.setTimeout(() => {
+      setCopyEmailStatus((current) => current?.actionId === actionId ? null : current);
+    }, 1800);
+  };
 
   return (
     <div className="detail-grid">
@@ -1146,6 +1162,7 @@ function CallDetailWorkspace({
                   <div className="agent-action-title-row">
                     <div>
                       <span className="field-label">{action.payload_json.priority} priority · {isPending ? "approval required" : action.status === "REJECTED" ? "rejected by reviewer" : "human approved"}</span>
+                      <span className="field-label action-heading-label">{isPending ? "Recommended action" : "Action"}</span>
                       <h4>{action.payload_json.title}</h4>
                     </div>
                     <span className={`action-status status-${action.status.toLowerCase().replaceAll("_", "-")}`}>{formatStatus(action.status)}</span>
@@ -1169,6 +1186,34 @@ function CallDetailWorkspace({
                       <span className="field-label">Recorded outcome</span>
                       <p>{action.payload_json.execution.result}</p>
                     </div>
+                  )}
+                  {action.payload_json.customerCommunication && (
+                    <section className="customer-communication-draft" aria-label="Customer response draft">
+                      <div className="customer-draft-heading">
+                        <div>
+                          <span className="field-label">Customer response draft</span>
+                          <p>{isPending ? "AI-drafted · Prepared for review · Review before sending" : "AI-drafted · Review before sending"}</p>
+                        </div>
+                        <span className="customer-draft-badge">AI DRAFT</span>
+                      </div>
+                      <div className="customer-draft-subject">
+                        <span className="field-label">Subject</span>
+                        <p>{action.payload_json.customerCommunication.subject}</p>
+                      </div>
+                      <p className="customer-draft-body">{action.payload_json.customerCommunication.body}</p>
+                      <div className="customer-draft-actions">
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          onClick={() => void copyCustomerEmail(action.id, action.payload_json.customerCommunication!)}
+                        >
+                          Copy email
+                        </button>
+                        {copyEmailStatus?.actionId === action.id && (
+                          <span className="customer-draft-copy-status" role="status">{copyEmailStatus.message}</span>
+                        )}
+                      </div>
+                    </section>
                   )}
                   {action.status === "FAILED" && action.error_message && <p className="action-result is-error" role="alert">{action.error_message}</p>}
                   {action.status === "EXECUTING" && <p className="action-result">Approved; deterministic execution is in progress.</p>}

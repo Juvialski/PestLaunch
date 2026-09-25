@@ -27,7 +27,7 @@ export function createApp() {
   app.disable("x-powered-by");
   app.use(express.json({ limit: "32kb" }));
   app.use("/api/calls", createCallsRouter({ supabase, bucketName, ai, highRiskAlert }));
-  app.use("/api", createActionsRouter({ supabase }));
+  app.use("/api", createActionsRouter({ supabase, ai }));
   app.use("/api", (_request, response) => {
     response.status(404).json({ error: { code: "NOT_FOUND", message: "API route not found." } });
   });

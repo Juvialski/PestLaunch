@@ -100,6 +100,15 @@ const AgentActionRejectionSchema = z
   })
   .strict();
 
+export const CustomerCommunicationDraftSchema = z
+  .object({
+    type: z.literal("EMAIL_DRAFT"),
+    subject: z.string().trim().min(1).max(160),
+    body: z.string().trim().min(1).max(2400),
+    modelUsed: z.literal("gemini-3.5-flash-lite"),
+  })
+  .strict();
+
 export const AgentActionPayloadSchema = z
   .object({
     version: z.literal(1),
@@ -110,11 +119,20 @@ export const AgentActionPayloadSchema = z
     requiresApproval: z.literal(true),
     targetDemoCustomerId: z.string().uuid().nullable(),
     expectedChanges: AgentActionExpectedChangesSchema,
+    customerCommunication: CustomerCommunicationDraftSchema.optional(),
     execution: AgentActionExecutionSchema.optional(),
     rejection: AgentActionRejectionSchema.optional(),
   })
   .strict()
   .superRefine((payload, context) => {
+    if (payload.customerCommunication && payload.actionType !== "CREATE_RETENTION_FOLLOWUP") {
+      context.addIssue({
+        code: "custom",
+        message: "Customer communication drafts are only supported for retention follow-ups.",
+        path: ["customerCommunication"],
+      });
+    }
+
     const actual = payload.expectedChanges.customer ?? {};
     const expected =
       payload.actionType === "CREATE_RETENTION_FOLLOWUP" &&

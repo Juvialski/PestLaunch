@@ -1,5 +1,24 @@
 import type { CallAnalysis, CallTranscript } from "../src/shared/calls.js";
 
+export type CustomerCommunicationDraftInput = {
+  customerName?: string;
+  transcript: string;
+  analysis: {
+    summary: string;
+    customerIntent: string;
+    outcome: CallAnalysis["outcome"];
+    signals: Pick<CallAnalysis["signals"], "complaint" | "cancellationRisk" | "followUpRequired">;
+  };
+  actionType: "CREATE_RETENTION_FOLLOWUP";
+  actionReason: string;
+};
+
+export type CustomerCommunicationDraftResult = {
+  subject: string;
+  body: string;
+  modelUsed: "gemini-3.5-flash-lite";
+};
+
 export type AiFailureCategory =
   | "QUOTA"
   | "RATE_LIMIT"
@@ -16,6 +35,7 @@ export type CallAnalysisResult = { analysis: CallAnalysis; modelUsed: string; at
 export type CallsAiService = {
   transcribe(audio: Buffer, mimeType: string): Promise<CallTranscriptionResult>;
   analyze(transcript: string): Promise<CallAnalysisResult>;
+  draftCustomerCommunication(input: CustomerCommunicationDraftInput): Promise<CustomerCommunicationDraftResult>;
 };
 
 export class RecoverableAiError extends Error {

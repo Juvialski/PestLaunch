@@ -776,3 +776,25 @@ After the merge, `AGENTS.md` was also updated to prefer one bounded real local p
 - `npm run build` — passed, including app/server/test type checks and Vite production build.
 - Gemini calls: 0. Brevo sends: 0. Database migration: none. Jev: not integrated.
 - Prototype limitation remains: processing is synchronous on the existing server. If the server stops during a run, a call can remain `PROCESSING`; this phase adds bounded read-only polling but no background worker or stale-lock recovery policy.
+
+## 24. FINAL-R2 — AI customer response draft — 2026-09-26
+
+### Behavior and persistence
+
+- After the persisted transcript and validated analysis produce a deterministic `CREATE_RETENTION_FOLLOWUP`, the first successful action insert triggers one customer-draft request using `gemini-3.5-flash-lite` with high thinking. The draft request uses only the caller/customer name, transcript, analysis summary/intent/outcome and relevant signals, and deterministic action reason. It has no model fallback.
+- The validated `subject`, `body`, and `modelUsed` are saved as `customerCommunication` inside the existing `agent_actions.payload_json`. No new table or database migration is needed.
+- Existing or duplicate proposals return the saved action without another draft request. Reopening a call reads the persisted draft. Draft errors or invalid output leave the deterministic action usable and approval-gated.
+- The Recommended response panel marks the draft for review before sending and copies `Subject: ...` plus the body. PestLaunch has no customer-send control; automatic Brevo email remains an internal HIGH/URGENT escalation only.
+
+### Interview story
+
+Gemini understands the call → deterministic policy decides the operational action → Gemini drafts the human-facing communication → a human remains responsible for sending it.
+
+### Verification
+
+- `npm test` — 103 passed, 0 failed. `npm run lint` — passed. `npm run build` — passed.
+- Automated Gemini coverage uses a fake Interactions client and made zero provider requests.
+- One live smoke used the FINAL-R2 local server against the configured Supabase project. Synthetic call `93e4d86b-ee1d-49db-88aa-27945728ec94` was transcribed once with `gemini-3.5-transcribe`, analyzed once with `gemini-3.5-flash-lite`, and drafted once with `gemini-3.5-flash-lite` at high thinking. It persisted as `COMPLAINT` / `HIGH` with cancellation risk and a pending, approval-required `CREATE_RETENTION_FOLLOWUP` action containing the draft subject, body, and model name.
+- Local browser review showed the draft in Recommended response, **Copy email** displayed **Copied**, and refresh/reopen loaded the same saved draft. The local smoke had no configured `HIGH_RISK_ALERT_RECIPIENTS`; zero notification rows were created and no customer email was sent.
+- The existing Render service remains on pre-FINAL-R2 code. Its call-detail API currently returns HTTP 503 `CALL_INTELLIGENCE_UNAVAILABLE` for this new action payload because the deployed strict schema predates `customerCommunication`. Verify the call through Render after FINAL-R2 is merged/deployed. No Render deploy or merge was triggered for this PR.
+- Migration: none. Jev: not integrated.

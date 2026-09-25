@@ -9,6 +9,7 @@ import {
 import {
   AgentActionPayloadSchema,
   AgentActionRowSchema,
+  CustomerCommunicationDraftSchema,
   DemoCustomerSchema,
   MAX_ACTION_EXECUTION_ATTEMPTS,
   type AgentActionPayload,
@@ -23,6 +24,7 @@ import {
   isDemoCustomerId,
 } from "./demoFixtures.js";
 import { proposeDeterministicAction } from "./actionPolicy.js";
+import type { CallsAiService } from "./aiTypes.js";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DNS_NAMESPACE = Buffer.from("6ba7b8109dad11d180b400c04fd430c8", "hex");
@@ -30,13 +32,15 @@ type RouterLogger = Pick<Console, "error"> & Partial<Pick<Console, "warn">>;
 
 export type ActionsRouterDependencies = {
   supabase: SupabaseClient;
+  ai: Pick<CallsAiService, "draftCustomerCommunication">;
   logger?: RouterLogger;
 };
 
-type PersistedCall = { id: string; demo_customer_id: string | null };
+type PersistedCall = { id: string; demo_customer_id: string | null; caller_name: string | null };
 type ProposalSource = {
   call: PersistedCall;
   analysis: ReturnType<typeof CallAnalysisSchema.parse>;
+  transcript: ReturnType<typeof CallTranscriptSchema.parse>;
   customer: DemoCustomer | null;
 };
 type SourceLoadResult =
@@ -49,7 +53,7 @@ type CustomerExecution = {
   result: string;
 };
 
-export function createActionsRouter({ supabase, logger = console }: ActionsRouterDependencies): express.Router {
+export function createActionsRouter({ supabase, ai, logger = console }: ActionsRouterDependencies): express.Router {
   const router = express.Router();
 
   router.post("/calls/:id/actions/propose", async (request, response) => {
@@ -134,12 +138,65 @@ export function createActionsRouter({ supabase, logger = console }: ActionsRoute
         return;
       }
 
-      const action = readActionRow(data);
+      let action = readActionRow(data);
       if (!action || action.id !== actionId || action.call_id !== id || action.action_type !== proposal.actionType) {
         logger.error("Persisted deterministic action did not match its validated proposal.");
         sendError(response, 503, "ACTION_SAVE_FAILED", "The saved action proposal could not be validated.");
         return;
       }
+
+      if (action.action_type === "CREATE_RETENTION_FOLLOWUP") {
+        try {
+          const draft = await ai.draftCustomerCommunication({
+            ...(sourceResult.source.call.caller_name?.trim()
+              ? { customerName: sourceResult.source.call.caller_name.trim() }
+              : sourceResult.source.customer?.name
+                ? { customerName: sourceResult.source.customer.name }
+                : {}),
+            transcript: sourceResult.source.transcript.text,
+            analysis: {
+              summary: sourceResult.source.analysis.summary,
+              customerIntent: sourceResult.source.analysis.customerIntent,
+              outcome: sourceResult.source.analysis.outcome,
+              signals: {
+                complaint: sourceResult.source.analysis.signals.complaint,
+                cancellationRisk: sourceResult.source.analysis.signals.cancellationRisk,
+                followUpRequired: sourceResult.source.analysis.signals.followUpRequired,
+              },
+            },
+            actionType: "CREATE_RETENTION_FOLLOWUP",
+            actionReason: proposal.reason,
+          });
+          const customerCommunication = CustomerCommunicationDraftSchema.parse({
+            type: "EMAIL_DRAFT",
+            ...draft,
+          });
+          const payload = AgentActionPayloadSchema.parse({
+            ...action.payload_json,
+            customerCommunication,
+          });
+          const update = await supabase
+            .from("agent_actions")
+            .update({ payload_json: payload })
+            .eq("id", action.id)
+            .eq("status", "PENDING")
+            .select("*")
+            .maybeSingle();
+          if (update.error) {
+            logger.warn?.("Customer communication draft could not be saved; the deterministic action remains available.", update.error);
+          } else if (update.data) {
+            const updatedAction = readActionRow(update.data);
+            if (updatedAction?.id === action.id) action = updatedAction;
+            else logger.warn?.("Saved customer communication draft failed action validation; the deterministic action remains available.");
+          } else {
+            const latest = await loadActionById(supabase, action.id);
+            if (latest.action) action = latest.action;
+          }
+        } catch (error) {
+          logger.warn?.("Customer response draft is unavailable; the deterministic action remains available.", error);
+        }
+      }
+
       response.status(201).json({ action });
     } catch (error) {
       logger.error("Action proposal request failed.", error);
@@ -363,7 +420,7 @@ export function createActionsRouter({ supabase, logger = console }: ActionsRoute
 async function loadProposalSource(supabase: SupabaseClient, callId: string): Promise<SourceLoadResult> {
   try {
     const [callResult, analysisResult, transcriptResult] = await Promise.all([
-      supabase.from("calls").select("id,demo_customer_id").eq("id", callId).maybeSingle(),
+      supabase.from("calls").select("id,demo_customer_id,caller_name").eq("id", callId).maybeSingle(),
       supabase.from("call_analysis").select("*").eq("call_id", callId).maybeSingle(),
       supabase.from("transcripts").select("*").eq("call_id", callId).maybeSingle(),
     ]);
@@ -410,15 +467,26 @@ async function loadProposalSource(supabase: SupabaseClient, callId: string): Pro
     }
 
     const callRow = callResult.data as Record<string, unknown>;
-    if (typeof callRow.id !== "string" || (callRow.demo_customer_id !== null && typeof callRow.demo_customer_id !== "string")) {
+    if (
+      typeof callRow.id !== "string" ||
+      (callRow.demo_customer_id !== null && typeof callRow.demo_customer_id !== "string") ||
+      (callRow.caller_name !== null && typeof callRow.caller_name !== "string")
+    ) {
       return { ok: false, statusCode: 409, code: "CALL_INVALID", message: "The saved call record failed validation." };
     }
-    const call: PersistedCall = { id: callRow.id, demo_customer_id: callRow.demo_customer_id as string | null };
+    const call: PersistedCall = {
+      id: callRow.id,
+      demo_customer_id: callRow.demo_customer_id as string | null,
+      caller_name: callRow.caller_name as string | null,
+    };
     const customer = await loadDemoCustomerById(supabase, call.demo_customer_id);
     if (customer.error) {
       return { ok: false, statusCode: 503, code: "DEMO_CUSTOMER_UNAVAILABLE", message: "The linked demo customer could not be loaded.", cause: customer.error };
     }
-    return { ok: true, source: { call, analysis: parsedAnalysis.data, customer: customer.customer } };
+    return {
+      ok: true,
+      source: { call, analysis: parsedAnalysis.data, transcript: parsedTranscript.data, customer: customer.customer },
+    };
   } catch (error) {
     return {
       ok: false,

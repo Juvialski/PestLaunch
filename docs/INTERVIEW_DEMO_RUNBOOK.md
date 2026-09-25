@@ -14,6 +14,8 @@
 
 **Readiness note (2026-09-25):** The final interview build uses `gemini-3.5-flash-lite` for analysis with high thinking and `gemini-3.5-flash` as a single high-thinking fallback. This replaces the slower multi-model reasoning cascade after a deployed test hit repeated rate limits. The production Brevo path has been verified separately with a real HIGH-risk alert and inbox receipt.
 
+**FINAL-R2 draft fixture (2026-09-26):** Synthetic call `93e4d86b-ee1d-49db-88aa-27945728ec94` has a persisted transcript, HIGH complaint/cancellation-risk analysis, pending retention action, and one saved `gemini-3.5-flash-lite` customer draft. It remained unapproved and no customer email was sent. The local verification had no configured internal alert recipients. This action payload was written before the FINAL-R2 branch is deployed; use the fixture through Render only after the PR is merged/deployed, because the current Render main does not yet accept the extended action payload schema.
+
 ## Recommended live walkthrough
 
 1. Explain that manual upload is the prototype's call-ingestion boundary and processing starts automatically after upload.
@@ -24,19 +26,22 @@
 6. Point to the transcript evidence supporting the cancellation risk.
 7. Show **High-risk escalation — Sent to configured contacts** and check the internal inbox for the PestLaunch alert.
 8. Explain that the email is an internal alert sent after validated analysis. It includes a short summary and supporting evidence, omits the full transcript, and does not execute the proposed business action.
-9. Show the deterministic retention recommendation and its pending approval state.
-10. Show that Jordan is still `HEALTHY` while approval is pending.
-11. Click **Approve**.
-12. Show the completed retention follow-up and its recorded customer change.
-13. Walk through the connected activity timeline, including the separate high-risk alert event.
-14. Explain that refresh/reopen reads saved transcript, analysis, alert, action, and timeline state without rerunning Gemini or sending a duplicate alert.
-15. Explain that the same pattern can later support leads, collections, upsells, and reactivation.
+9. Show the deterministic retention action and its customer response draft. Explain that the draft is created once with `gemini-3.5-flash-lite` after the first retention action is saved, then read from the action payload on refresh.
+10. Read the draft against the transcript evidence. Point out **Review before sending** and use **Copy email** to copy `Subject: ...` plus the body.
+11. Explain the two separate boundaries: the automatic Brevo message is an internal escalation; the customer draft is never sent by PestLaunch and remains for a human to review and send separately.
+12. Show that Jordan is still `HEALTHY` while the business action awaits approval.
+13. Click **Approve follow-up**.
+14. Show Jordan change to `AT_RISK`, the retention follow-up reach `COMPLETED`, and the saved customer draft remain visible and copyable beside the recorded outcome.
+15. Walk through the connected activity timeline, including the separate high-risk alert event.
+16. Explain that refresh/reopen reads saved transcript, analysis, alert, action, and draft state without rerunning Gemini, regenerating the draft, or sending a duplicate alert.
+17. Explain that the same deterministic pattern can later support leads, collections, upsells, and reactivation; customer communications remain outside this phase.
 
 ## Processing and workflow boundary
 
 - Current prototype: browser upload → the frontend automatically starts the existing idempotent processing request.
 - Progress reflects persisted stages; Gemini work uses an indeterminate active stage, not a percentage.
 - HIGH/URGENT internal escalation is automatic after validated analysis. A material business action still waits for human approval.
+- For a new retention action, one optional Gemini call creates a customer email draft in the action payload. It is shown for human review and can be copied; there is no customer-send control or automatic customer email.
 - Future production: recording ingestion → backend event or queue → background processing. No queue or worker is part of this prototype.
 - Jev is not integrated.
 

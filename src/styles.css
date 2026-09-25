@@ -330,6 +330,18 @@ h3 { margin: 0; font-size: 17px; line-height: 1.3; font-weight: 720; }
 .action-effect p { margin: 0; color: #56675c; font-size: 10px; line-height: 1.5; }
 .action-outcome { padding: 9px 10px; margin-top: 10px; border: 1px solid #dce9d9; border-radius: 8px; background: #f2f8ef; }
 .action-outcome p { margin: 0; color: #3f6847; font-size: 10px; line-height: 1.5; font-weight: 600; }
+.action-heading-label { display: block; margin: 7px 0 3px !important; }
+.customer-communication-draft { padding: 10px; margin-top: 10px; border: 1px solid #dce5d9; border-radius: 8px; background: #fff; }
+.customer-draft-heading { display: flex; align-items: start; justify-content: space-between; gap: 9px; }
+.customer-draft-heading .field-label, .customer-draft-subject .field-label { margin: 0; }
+.customer-draft-heading p { margin: 4px 0 0; color: #69766d; font-size: 10px; line-height: 1.45; }
+.customer-draft-badge { padding: 4px 6px; flex: 0 0 auto; border: 1px solid #e2e9dc; border-radius: 999px; color: #486a4c; background: #f2f7ef; font-size: 9px; font-weight: 800; letter-spacing: .04em; }
+.customer-draft-subject { padding-top: 9px; margin-top: 8px; border-top: 1px solid #edf0ea; }
+.customer-draft-subject p { margin: 3px 0 0; color: #394c3e; font-size: 11px; line-height: 1.5; font-weight: 650; }
+.customer-draft-body { margin: 8px 0 0; color: #4f5e53; font-size: 11px; line-height: 1.6; white-space: pre-wrap; }
+.customer-draft-actions { margin-top: 9px; display: flex; align-items: center; gap: 9px; }
+.customer-draft-actions .secondary-button { min-height: 34px; }
+.customer-draft-copy-status { color: #3c704f; font-size: 10px; font-weight: 700; }
 .action-controls { margin-top: 11px; display: flex; flex-wrap: wrap; gap: 7px; }
 .action-controls .primary-button, .action-controls .secondary-button { min-width: 105px; min-height: 36px; }
 .action-result { margin: 8px 0 0; color: #637168; font-size: 10px; line-height: 1.5; }

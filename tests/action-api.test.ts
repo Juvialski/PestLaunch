@@ -7,7 +7,6 @@ import type { CallAnalysis, CallAnalysisRow, CallRecord, CallTranscriptRow } fro
 import type { AgentActionRow, DemoCustomer } from "../src/shared/actions.js";
 import { createActionsRouter } from "../server/actionsRouter.js";
 import { createCallsRouter } from "../server/callsRouter.js";
-import type { CallsAiService } from "../server/aiTypes.js";
 import { DEMO_CUSTOMER_IDS, DEMO_CUSTOMERS } from "../server/demoFixtures.js";
 
 const CALL_ID = "3dd5d1a6-8118-43e4-b340-206825622cff";
@@ -275,19 +274,40 @@ function makeMemory(options: {
 
 function createAiSpy() {
   const calls = { transcribe: 0, analyze: 0 };
-  const ai: CallsAiService = {
+  const drafts: {
+    count: number;
+    requests: Record<string, unknown>[];
+    error: Error | null;
+    response: { subject: string; body: string; modelUsed: "gemini-3.5-flash-lite" };
+  } = {
+    count: 0,
+    requests: [],
+    error: null,
+    response: {
+      subject: "Following up on your pest control service",
+      body: "Hi Jordan, we are reviewing the scheduling issue and will follow up before your next visit.",
+      modelUsed: "gemini-3.5-flash-lite" as const,
+    },
+  };
+  const ai = {
     async transcribe() { calls.transcribe += 1; throw new Error("P3 must not transcribe"); },
     async analyze() { calls.analyze += 1; throw new Error("P3 must not analyze"); },
+    async draftCustomerCommunication(input: Record<string, unknown>) {
+      drafts.count += 1;
+      drafts.requests.push(input);
+      if (drafts.error) throw drafts.error;
+      return drafts.response;
+    },
   };
-  return { calls, ai };
+  return { calls, drafts, ai };
 }
 
-function createTestApp(supabase: SupabaseClient, ai: CallsAiService) {
+function createTestApp(supabase: SupabaseClient, ai: ReturnType<typeof createAiSpy>["ai"]) {
   const app = express();
   app.use(express.json());
   const logger = { error: () => undefined };
   app.use("/api/calls", createCallsRouter({ supabase, bucketName: "call-recordings", ai, logger }));
-  app.use("/api", createActionsRouter({ supabase, logger }));
+  app.use("/api", createActionsRouter({ supabase, ai, logger }));
   return app;
 }
 
@@ -301,7 +321,7 @@ async function propose(app: express.Express) {
   return request(app).post(`/api/calls/${CALL_ID}/actions/propose`);
 }
 
-test("proposal uses persisted analysis and repeats return one pending action without Gemini", async () => {
+test("new retention proposal generates and persists one draft reused by refresh and repeated proposal", async () => {
   const memory = makeMemory({ customers: [withCustomer()] });
   const ai = createAiSpy();
   const app = createTestApp(memory.supabase, ai.ai);
@@ -314,8 +334,28 @@ test("proposal uses persisted analysis and repeats return one pending action wit
   assert.equal(first.body.action.status, "PENDING");
   assert.equal(first.body.action.requires_approval, true);
   assert.equal(first.body.action.payload_json.priority, "HIGH");
+  assert.deepEqual(first.body.action.payload_json.customerCommunication, {
+    type: "EMAIL_DRAFT",
+    subject: "Following up on your pest control service",
+    body: "Hi Jordan, we are reviewing the scheduling issue and will follow up before your next visit.",
+    modelUsed: "gemini-3.5-flash-lite",
+  });
+  assert.equal(ai.drafts.count, 1);
+  assert.deepEqual(ai.drafts.requests[0], {
+    customerName: "Jordan Example",
+    transcript: "Your technicians have been late twice. I am considering cancelling.",
+    analysis: {
+      summary: "The synthetic customer reports repeated late visits.",
+      customerIntent: "The customer is considering cancellation.",
+      outcome: "FOLLOW_UP_REQUIRED",
+      signals: { complaint: true, cancellationRisk: true, followUpRequired: true },
+    },
+    actionType: "CREATE_RETENTION_FOLLOWUP",
+    actionReason: "P2 detected cancellation risk or classified this call as a cancellation.",
+  });
   assert.equal(second.status, 200);
   assert.equal(second.body.action.id, first.body.action.id);
+  assert.deepEqual(second.body.action.payload_json.customerCommunication, first.body.action.payload_json.customerCommunication);
   assert.equal(memory.state.actions.length, 1);
   assert.equal(memory.state.customers[0]?.health_status, "HEALTHY");
   const detail = await request(app).get(`/api/calls/${CALL_ID}`);
@@ -323,8 +363,10 @@ test("proposal uses persisted analysis and repeats return one pending action wit
   assert.equal(detail.body.demoCustomer.id, DEMO_CUSTOMER_IDS.retention);
   assert.equal(detail.body.actions.length, 1);
   assert.equal(detail.body.actions[0].status, "PENDING");
+  assert.deepEqual(detail.body.actions[0].payload_json.customerCommunication, first.body.action.payload_json.customerCommunication);
   assert.equal(detail.body.actionPolicyState, "PENDING_ACTION");
   assert.deepEqual(ai.calls, { transcribe: 0, analyze: 0 });
+  assert.equal(ai.drafts.count, 1);
 });
 
 test("concurrent proposal requests produce one deterministic action row", async () => {
@@ -337,6 +379,8 @@ test("concurrent proposal requests produce one deterministic action row", async 
   assert.equal(memory.state.actions.length, 1);
   assert.equal(responses.every((response) => response.status === 200 || response.status === 201), true);
   assert.equal(responses[0]?.body.action.id, responses[1]?.body.action.id);
+  assert.equal(ai.drafts.count, 1);
+  assert.ok(responses.some((response) => response.body.action.payload_json.customerCommunication));
   assert.deepEqual(ai.calls, { transcribe: 0, analyze: 0 });
 });
 
@@ -399,6 +443,44 @@ test("missing analysis is rejected and irrelevant validated analysis returns no 
   assert.equal(noActionDetail.body.actionPolicyState, "NO_ACTION_REQUIRED");
   assert.equal(noActionDetail.body.actions.length, 0);
   assert.deepEqual(noActionAi.calls, { transcribe: 0, analyze: 0 });
+  assert.equal(noActionAi.drafts.count, 0);
+});
+
+test("draft failure leaves a pending retention action usable and repeated proposals do not retry", async () => {
+  const memory = makeMemory({ customers: [withCustomer()] });
+  const ai = createAiSpy();
+  ai.drafts.error = new Error("draft provider unavailable");
+  const app = createTestApp(memory.supabase, ai.ai);
+
+  const first = await propose(app);
+  const second = await propose(app);
+
+  assert.equal(first.status, 201);
+  assert.equal(first.body.action.action_type, "CREATE_RETENTION_FOLLOWUP");
+  assert.equal(first.body.action.status, "PENDING");
+  assert.equal(first.body.action.payload_json.customerCommunication, undefined);
+  assert.equal(second.status, 200);
+  assert.equal(second.body.action.status, "PENDING");
+  assert.equal(ai.drafts.count, 1);
+  assert.equal(memory.state.customers[0]?.health_status, "HEALTHY");
+});
+
+test("incomplete subject or body is rejected without invalidating the saved action", async () => {
+  for (const response of [
+    { subject: "", body: "A complete body.", modelUsed: "gemini-3.5-flash-lite" as const },
+    { subject: "A complete subject", body: "   ", modelUsed: "gemini-3.5-flash-lite" as const },
+  ]) {
+    const memory = makeMemory({ customers: [withCustomer()] });
+    const ai = createAiSpy();
+    ai.drafts.response = response;
+
+    const result = await propose(createTestApp(memory.supabase, ai.ai));
+
+    assert.equal(result.status, 201);
+    assert.equal(result.body.action.status, "PENDING");
+    assert.equal(result.body.action.payload_json.customerCommunication, undefined);
+    assert.equal(memory.state.actions.length, 1);
+  }
 });
 
 test("call detail reports a server-derived available action before a proposal is saved", async () => {
@@ -440,10 +522,17 @@ test("approval is required before retention mutation and completion preserves it
   assert.ok(approved.body.action.approved_at);
   assert.ok(approved.body.action.executed_at);
   assert.ok(approved.body.action.payload_json.execution.completedAt);
+  assert.deepEqual(approved.body.action.payload_json.customerCommunication, {
+    type: "EMAIL_DRAFT",
+    subject: "Following up on your pest control service",
+    body: "Hi Jordan, we are reviewing the scheduling issue and will follow up before your next visit.",
+    modelUsed: "gemini-3.5-flash-lite",
+  });
   assert.equal(memory.state.customers[0]?.health_status, "AT_RISK");
   assert.equal(memory.state.customerMutations, 1);
   const detail = await request(app).get(`/api/calls/${CALL_ID}`);
   assert.equal(detail.body.actionPolicyState, "COMPLETED_ACTION");
+  assert.equal(ai.drafts.count, 1);
   assert.deepEqual(ai.calls, { transcribe: 0, analyze: 0 });
 });
 
@@ -477,6 +566,7 @@ test("approved termite lead follow-up applies only the fixed QUALIFIED pipeline 
   assert.equal(memory.state.customers[0]?.health_status, "HEALTHY");
   assert.equal(memory.state.customerMutations, 1);
   assert.deepEqual(ai.calls, { transcribe: 0, analyze: 0 });
+  assert.equal(ai.drafts.count, 0);
 });
 
 test("approved upsell is represented by the completed task action without a customer-field mutation", async () => {
@@ -566,6 +656,7 @@ test("repeated and simultaneous approvals complete a retention action only once"
   assert.equal(memory.state.actions[0]?.status, "COMPLETED");
   assert.equal(memory.state.customerMutations, 1);
   assert.deepEqual(ai.calls, { transcribe: 0, analyze: 0 });
+  assert.equal(ai.drafts.count, 1);
 });
 
 test("failed execution preserves approval and error, then safely retries the same stored action", async () => {
