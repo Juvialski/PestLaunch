@@ -10,17 +10,19 @@
     "dev": "concurrently --kill-others --names api,web \"tsx watch server/index.ts\" \"vite --host 0.0.0.0\"",
     "build": "npm run typecheck && tsc -p tsconfig.server.json && vite build",
     "start": "node dist/server/server/index.js",
-    "test": "tsx --test tests/audio-ingestion.test.ts",
+    "test": "tsx --test tests/*.test.ts",
     "typecheck": "tsc -b && tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.test.json",
     "lint": "eslint ."
   },
   "dependencies": {
+    "@google/genai": "2.24.0",
     "@supabase/supabase-js": "2.117.1",
     "dotenv": "18.0.3",
     "express": "5.2.1",
     "multer": "2.4.0",
     "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "react-dom": "19.3.0",
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

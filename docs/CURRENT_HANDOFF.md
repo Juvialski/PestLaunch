@@ -29,11 +29,11 @@ Repository:
 
 `Juvialski/PestLaunch`
 
-Current main at this handoff:
+Main before the P2 implementation branch:
 
-`ad19902a277b2c6f6a43d520f60689f573586475`
+`927e39d883462e7348f2351c72ee3ecc71236576`
 
-Open PRs at this handoff: none.
+P1 is merged. P2 is implemented on `codex/p2-gemini-call-intelligence` and is delivered as one PR.
 
 P1 was merged as:
 
@@ -55,7 +55,9 @@ P1 provides:
 - storage cleanup if call-row persistence fails
 - focused ingestion tests
 
-P1 intentionally does not contain Gemini processing yet.
+At the time P1 was merged, Gemini processing was intentionally deferred.
+
+P2 adds explicit synchronous processing, persisted transcript and analysis detail, signed private-audio playback, and the call-detail workspace. No P2 schema migration was added or applied.
 
 ## 3. Live deployment
 
@@ -92,7 +94,7 @@ Start command:
 
 `npm start`
 
-A future bounded implementation phase should update `render.yaml` to match the working live build command.
+`render.yaml` now matches the working live build command.
 
 Do not hard-code `PORT`; Render supplies it.
 
@@ -164,6 +166,8 @@ SUPABASE_STORAGE_BUCKET=call-recordings
 GEMINI_API_KEY
 ```
 
+`GEMINI_API_KEY` is server-only. Do not expose it through a `VITE_` variable or browser code. `.env.example` and `render.yaml` document it as a server environment variable.
+
 `SUPABASE_SECRET_KEY` is the preferred privileged server credential.
 
 The current architecture does **not** require:
@@ -185,8 +189,8 @@ We have limited request quotas on the stronger models, so real API calls must be
 
 Preference:
 
-1. Gemini 3.5 Transcribe
-2. Gemini 3.8 Flash multimodal audio fallback
+1. `gemini-3.5-transcribe`
+2. `gemini-3.8-flash` multimodal audio fallback
 
 If the exact API model identifier differs from the dashboard/human-facing name, use the actual callable identifier and centralize it in one provider/config layer.
 
@@ -196,12 +200,12 @@ Speaker labels and timestamps are desirable but not required for a valid transcr
 
 Use this order:
 
-1. Gemini 3.8 Flash
-2. Gemini 3.7 Flash
-3. Gemini 3.6 Flash
-4. Gemini 3.5 Flash
+1. `gemini-3.8-flash`
+2. `gemini-3.7-flash`
+3. `gemini-3.6-flash`
+4. `gemini-3.5-flash`
 
-Gemini 3.5 Flash Lite is **not** part of the normal reasoning fallback chain.
+Gemini 3.5 Flash Lite is **not** part of the reasoning fallback chain. Routing and model identifiers are centralized in `server/geminiService.ts`.
 
 Use bounded fallbacks for appropriate failures such as quota/rate limit, timeout, model unavailable, temporary provider errors, or invalid structured output.
 
@@ -209,7 +213,7 @@ Never retry indefinitely.
 
 ## 8. Critical quota rule
 
-The next phase must **not automatically process calls immediately after upload**.
+P2 does **not** automatically process calls immediately after upload.
 
 Use an explicit:
 
@@ -229,9 +233,9 @@ A successfully analyzed call must not automatically consume Gemini quota again.
 
 Automated tests must mock Gemini.
 
-## 9. Next bounded phase: P2 — Gemini Transcription + Call Intelligence
+## 9. P2 implementation: Gemini Transcription + Call Intelligence
 
-P2 should implement only:
+P2 implements only:
 
 ```
 uploaded recording
@@ -244,13 +248,11 @@ uploaded recording
 -> display call detail intelligence
 ```
 
-### Processing endpoint
-
-Preferred:
+### Implemented endpoints and processing rules
 
 `POST /api/calls/:id/process`
 
-Expected lifecycle:
+Processing runs synchronously only for this explicit POST:
 
 1. validate/load call
 2. avoid accidental duplicate processing
@@ -264,6 +266,14 @@ Expected lifecycle:
 10. upsert `call_analysis`
 11. status -> `ANALYZED`
 12. clear `last_error`
+
+`GET /api/calls/:id` returns the call with its persisted transcript and analysis. `GET /api/calls/:id/audio` redirects to a five-minute signed URL for the private Storage object. The bucket remains private.
+
+A valid analysis already persisted for an `ANALYZED` call is returned without model calls. A valid persisted transcript is reused for retries, so a transcript checkpoint does not consume transcription quota again. Conditional status updates prevent duplicate concurrent processing. Gemini SDK retries are disabled; each configured model is attempted at most once per operation. Model attempt results and normalized failure categories are logged. Transcript `model_used` and `attempt_count`, analysis `model_used`, and `calls.last_error` preserve the available metadata.
+
+P2 required no migration and no hosted Supabase migration command was run.
+
+Known limitation: if the Render process stops during a synchronous run, the call can remain `PROCESSING`. P2 deliberately has no stale-lock expiry or reset endpoint because safely recovering long calls would need a persisted lease policy. An operator must repair that existing call row before retrying.
 
 Exhausted recoverable AI fallbacks:
 
@@ -311,11 +321,11 @@ Validate model output at runtime before persistence/use, preferably with Zod.
 
 The recommended action in P2 is a **proposal only**.
 
-## 10. P2 UI target
+## 10. P2 call-detail workspace
 
 Do not broadly redesign the current app.
 
-Make recent calls selectable and provide a call-detail view.
+Recent calls are selectable and open a focused detail view.
 
 Left side:
 
@@ -336,7 +346,7 @@ Right side:
 - transcript evidence
 - **Proposed action**
 
-For an unprocessed call, expose one obvious `Process call` button.
+For an unprocessed call, the view exposes one obvious `Process call` button. Retry is available for `FAILED` and `NEEDS_REVIEW`; duplicate processing is disabled while `PROCESSING`. An `ANALYZED` call has no action that silently spends Gemini quota again.
 
 Handle these states clearly:
 
@@ -451,6 +461,6 @@ A new ChatGPT chat should read, in order:
 3. `docs/PROTOTYPE_PLAN.md`
 4. relevant current code/live PR state
 
-Then prepare the next Codex prompt for **P2 — Gemini Transcription + Call Intelligence**.
+Then continue with **P3 — deterministic proposal, human approval, demo execution, and audit trail**.
 
-Do not require the user to paste the full historical chat again.
+Do not repeat P2 or require the user to paste the full historical chat again. Keep P3 limited to deterministic policy, explicit approve/reject, simulated state changes, and audit history. Keep external messaging, authentication, phone providers, and CRM integrations deferred.

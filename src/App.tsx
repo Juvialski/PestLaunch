@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ApiErrorResponse, CallSummary } from "./shared/calls.js";
+import type {
+  ApiErrorResponse,
+  CallAnalysisRow,
+  CallRecord,
+  CallSummary,
+  CallTranscriptRow,
+} from "./shared/calls.js";
 import { MAX_AUDIO_UPLOAD_BYTES } from "./shared/calls.js";
 
 const ACCEPTED_EXTENSIONS = new Set(["mp3", "wav", "m4a", "webm"]);
@@ -7,8 +13,18 @@ const ACCEPTED_FORMATS = "audio/mpeg,audio/wav,audio/x-wav,audio/mp4,audio/x-m4a
 
 type UploadState = "idle" | "uploading" | "success" | "error";
 type CallsState = "loading" | "ready" | "error";
+type DetailState = "idle" | "loading" | "ready" | "error";
+type ProcessState = "idle" | "processing" | "success" | "error";
+type CallDetailPayload = {
+  call: CallRecord;
+  transcript: CallTranscriptRow | null;
+  analysis: CallAnalysisRow | null;
+};
 type ApiPayload = {
   calls?: CallSummary[];
+  call?: CallRecord;
+  transcript?: CallTranscriptRow | null;
+  analysis?: CallAnalysisRow | null;
   error?: ApiErrorResponse["error"];
 };
 
@@ -21,6 +37,19 @@ async function fetchRecentCalls(): Promise<CallSummary[]> {
   return payload.calls ?? [];
 }
 
+async function fetchCallDetail(callId: string): Promise<CallDetailPayload> {
+  const response = await fetch(`/api/calls/${callId}`);
+  const payload = (await response.json()) as ApiPayload;
+  if (!response.ok || !payload.call) {
+    throw new Error(payload.error?.message ?? "Call details could not be loaded.");
+  }
+  return {
+    call: payload.call,
+    transcript: payload.transcript ?? null,
+    analysis: payload.analysis ?? null,
+  };
+}
+
 export default function App() {
   const [calls, setCalls] = useState<CallSummary[]>([]);
   const [callsState, setCallsState] = useState<CallsState>("loading");
@@ -30,7 +59,15 @@ export default function App() {
   const [uploadState, setUploadState] = useState<UploadState>("idle");
   const [uploadMessage, setUploadMessage] = useState("");
   const [isDragging, setIsDragging] = useState(false);
+  const [selectedCallId, setSelectedCallId] = useState<string | null>(null);
+  const [callDetail, setCallDetail] = useState<CallDetailPayload | null>(null);
+  const [detailState, setDetailState] = useState<DetailState>("idle");
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [processState, setProcessState] = useState<ProcessState>("idle");
+  const [processError, setProcessError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const detailRequestRef = useRef(0);
+  const selectedCallIdRef = useRef<string | null>(null);
 
   const loadCalls = useCallback(async () => {
     setCallsState("loading");
@@ -47,6 +84,68 @@ export default function App() {
 
   const retryCalls = () => {
     void loadCalls();
+  };
+
+  const loadCallDetail = useCallback(async (callId: string) => {
+    const requestId = ++detailRequestRef.current;
+    setDetailState("loading");
+    setDetailError(null);
+    try {
+      const nextDetail = await fetchCallDetail(callId);
+      if (requestId !== detailRequestRef.current) return;
+      setCallDetail(nextDetail);
+      setDetailState("ready");
+    } catch (error) {
+      if (requestId !== detailRequestRef.current) return;
+      setDetailError(error instanceof Error ? error.message : "Call details could not be loaded.");
+      setDetailState("error");
+    }
+  }, []);
+
+  const selectCall = (callId: string) => {
+    selectedCallIdRef.current = callId;
+    setSelectedCallId(callId);
+    setCallDetail(null);
+    setProcessState("idle");
+    setProcessError(null);
+    void loadCallDetail(callId);
+  };
+
+  const handleProcessCall = async () => {
+    if (!callDetail || processState === "processing" || callDetail.call.status === "PROCESSING") return;
+    const callId = callDetail.call.id;
+    setProcessState("processing");
+    setProcessError(null);
+    setCallDetail((current) =>
+      current ? { ...current, call: { ...current.call, status: "PROCESSING" } } : current,
+    );
+    setCalls((current) => current.map((call) => (call.id === callId ? { ...call, status: "PROCESSING" } : call)));
+
+    try {
+      const response = await fetch(`/api/calls/${callId}/process`, { method: "POST" });
+      const payload = (await response.json()) as ApiPayload;
+      if (payload.call && selectedCallIdRef.current === callId) {
+        setCallDetail({
+          call: payload.call,
+          transcript: payload.transcript ?? null,
+          analysis: payload.analysis ?? null,
+        });
+      }
+      if (!response.ok) {
+        throw new Error(payload.error?.message ?? "Call processing could not be completed.");
+      }
+      if (selectedCallIdRef.current === callId) setProcessState("success");
+    } catch (error) {
+      if (selectedCallIdRef.current === callId) {
+        setProcessState("error");
+        setProcessError(error instanceof Error ? error.message : "Call processing could not be completed.");
+      }
+    } finally {
+      if (selectedCallIdRef.current === callId) {
+        await loadCallDetail(callId);
+      }
+      await loadCalls();
+    }
   };
 
   useEffect(() => {
@@ -292,20 +391,58 @@ export default function App() {
             ) : (
               <ul className="call-list">
                 {calls.map((call) => (
-                  <li className="call-row" key={call.id}>
-                    <span className="call-file-icon" aria-hidden="true"><AudioIcon /></span>
-                    <div className="call-main">
-                      <span className="call-name">{call.caller_name?.trim() || "Unassigned call"}</span>
-                      <span className="call-filename" title={call.original_filename}>{call.original_filename}</span>
-                    </div>
-                    <time className="call-date" dateTime={call.created_at}>{formatDate(call.created_at)}</time>
-                    <span className={`status-pill status-${call.status.toLowerCase().replaceAll("_", "-")}`}>
-                      <span className="status-dot" aria-hidden="true" />{formatStatus(call.status)}
-                    </span>
+                  <li key={call.id}>
+                    <button
+                      className={`call-row${selectedCallId === call.id ? " is-selected" : ""}`}
+                      type="button"
+                      aria-current={selectedCallId === call.id ? "true" : undefined}
+                      onClick={() => selectCall(call.id)}
+                    >
+                      <span className="call-file-icon" aria-hidden="true"><AudioIcon /></span>
+                      <span className="call-main">
+                        <span className="call-name">{call.caller_name?.trim() || "Unassigned call"}</span>
+                        <span className="call-filename" title={call.original_filename}>{call.original_filename}</span>
+                      </span>
+                      <time className="call-date" dateTime={call.created_at}>{formatDate(call.created_at)}</time>
+                      <span className={`status-pill status-${call.status.toLowerCase().replaceAll("_", "-")}`}>
+                        <span className="status-dot" aria-hidden="true" />{formatStatus(call.status)}
+                      </span>
+                    </button>
                   </li>
                 ))}
               </ul>
             )}
+          </div>
+        </section>
+
+        <section className="detail-section" aria-labelledby="detail-title">
+          <div className="section-heading detail-section-heading">
+            <div>
+              <p className="eyebrow">REVIEW</p>
+              <h2 id="detail-title">Call detail</h2>
+            </div>
+            {callDetail && <span className={`status-pill status-${callDetail.call.status.toLowerCase().replaceAll("_", "-")}`}>
+              <span className="status-dot" aria-hidden="true" />{formatStatus(callDetail.call.status)}
+            </span>}
+          </div>
+          <div className="call-detail-card">
+            {detailState === "idle" ? (
+              <div className="detail-empty">Select a recent call to review its recording and intelligence.</div>
+            ) : detailState === "loading" ? (
+              <div className="list-state"><span className="spinner" aria-hidden="true" /> Loading call detail…</div>
+            ) : detailState === "error" ? (
+              <div className="list-state list-error" role="alert">
+                <span>{detailError}</span>
+                {selectedCallId && <button className="text-button" type="button" onClick={() => void loadCallDetail(selectedCallId)}>Try again</button>}
+              </div>
+            ) : callDetail ? (
+              <CallDetailWorkspace
+                detail={callDetail}
+                processState={processState}
+                processError={processError}
+                onProcess={() => void handleProcessCall()}
+              />
+            ) : null}
           </div>
         </section>
       </main>
@@ -317,12 +454,196 @@ export default function App() {
   );
 }
 
+function CallDetailWorkspace({
+  detail,
+  processState,
+  processError,
+  onProcess,
+}: {
+  detail: CallDetailPayload;
+  processState: ProcessState;
+  processError: string | null;
+  onProcess: () => void;
+}) {
+  const { call, transcript, analysis } = detail;
+  const intelligence = analysis?.analysis_json;
+  const canProcess = call.status === "UPLOADED" || call.status === "FAILED" || call.status === "NEEDS_REVIEW";
+  const isBusy = call.status === "PROCESSING" || processState === "processing";
+  const signals = intelligence
+    ? [
+        ["newLead", "New lead"],
+        ["complaint", "Complaint"],
+        ["cancellationRisk", "Cancellation risk"],
+        ["upsellOpportunity", "Upsell opportunity"],
+        ["reactivationOpportunity", "Reactivation opportunity"],
+        ["collectionsIssue", "Collections issue"],
+        ["followUpRequired", "Follow-up required"],
+      ].filter(([key]) => intelligence.signals[key as keyof typeof intelligence.signals])
+    : [];
+
+  return (
+    <div className="detail-grid">
+      <section className="detail-panel" aria-labelledby="recording-title">
+        <div className="detail-panel-heading">
+          <p className="eyebrow">RECORDING</p>
+          <h3 id="recording-title">{call.caller_name?.trim() || "Unassigned call"}</h3>
+        </div>
+        <dl className="recording-meta">
+          <div><dt>File</dt><dd title={call.original_filename}>{call.original_filename}</dd></div>
+          <div><dt>Received</dt><dd>{formatDate(call.created_at)}</dd></div>
+          {call.duration !== null && <div><dt>Duration</dt><dd>{formatDuration(call.duration)}</dd></div>}
+        </dl>
+        <audio
+          className="call-audio"
+          controls
+          preload="none"
+          src={`/api/calls/${call.id}/audio`}
+          aria-label={`Recording for ${call.caller_name?.trim() || call.original_filename}`}
+        >
+          Your browser does not support audio playback.
+        </audio>
+
+        <div className="transcript-heading">
+          <div>
+            <p className="eyebrow">TRANSCRIPT</p>
+            <h3>Conversation</h3>
+          </div>
+          {transcript && <span className="model-note">{transcript.model_used}</span>}
+        </div>
+        {transcript ? (
+          transcript.segments_json.length > 0 ? (
+            <ol className="transcript-segments">
+              {transcript.segments_json.map((segment, index) => (
+                <li key={`${segment.speaker}-${segment.startMs ?? index}-${index}`}>
+                  <div className="transcript-segment-meta">
+                    <strong>{segment.speaker}</strong>
+                    {(segment.startMs !== undefined || segment.endMs !== undefined) && (
+                      <time>{formatSegmentTime(segment.startMs, segment.endMs)}</time>
+                    )}
+                  </div>
+                  <p>{segment.text}</p>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p className="transcript-plain">{transcript.text}</p>
+          )
+        ) : (
+          <p className="detail-muted">The transcript will appear here after processing.</p>
+        )}
+      </section>
+
+      <section className="detail-panel intelligence-panel" aria-labelledby="intelligence-title">
+        <div className="intelligence-heading">
+          <div className="detail-panel-heading">
+            <p className="eyebrow">CALL INTELLIGENCE</p>
+            <h3 id="intelligence-title">{intelligence ? formatStatus(intelligence.callType) : "Analysis"}</h3>
+          </div>
+          {intelligence && (
+            <div className="analysis-badges">
+              <span className={`priority-pill priority-${intelligence.priority.toLowerCase()}`}>{intelligence.priority} priority</span>
+              <span className="confidence-pill">{Math.round(intelligence.confidence * 100)}% confidence</span>
+            </div>
+          )}
+        </div>
+
+        {canProcess && (
+          <button className="primary-button process-button" type="button" onClick={onProcess} disabled={isBusy}>
+            {isBusy ? <><span className="spinner" aria-hidden="true" /> Processing call</> : call.status === "UPLOADED" ? "Process call" : "Retry processing"}
+          </button>
+        )}
+        {isBusy && <p className="process-status" role="status">Processing this call. Duplicate processing is disabled.</p>}
+        {processState === "success" && call.status === "ANALYZED" && (
+          <p className="process-status is-success" role="status">Transcript and call intelligence saved.</p>
+        )}
+        {processError && <p className="process-status is-error" role="alert">{processError}</p>}
+        {call.last_error && <p className="last-error" role="status">{call.last_error}</p>}
+
+        {intelligence ? (
+          <>
+            <div className="analysis-copy">
+              <div>
+                <span className="field-label">Summary</span>
+                <p>{intelligence.summary}</p>
+              </div>
+              <div>
+                <span className="field-label">Customer intent</span>
+                <p>{intelligence.customerIntent}</p>
+              </div>
+              <div className="analysis-inline-fields">
+                <div><span className="field-label">Sentiment</span><strong>{formatStatus(intelligence.sentiment)}</strong></div>
+                <div><span className="field-label">Outcome</span><strong>{formatStatus(intelligence.outcome)}</strong></div>
+              </div>
+            </div>
+
+            <div className="signal-section">
+              <span className="field-label">Signals</span>
+              {signals.length > 0 ? (
+                <ul className="signal-list">
+                  {signals.map(([, label]) => <li key={label}>{label}</li>)}
+                </ul>
+              ) : <p className="detail-muted">No key signals detected.</p>}
+            </div>
+
+            <div className="evidence-section">
+              <span className="field-label">Transcript evidence</span>
+              <ul className="evidence-list">
+                {intelligence.evidence.map((item, index) => (
+                  <li key={`${item.quote}-${index}`}>
+                    <blockquote>“{item.quote}”</blockquote>
+                    {item.speaker && <span>{item.speaker}</span>}
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            <div className="proposed-action">
+              <span className="field-label">Proposed action</span>
+              {intelligence.recommendedAction ? (
+                <div>
+                  <strong>{formatStatus(intelligence.recommendedAction.type)}</strong>
+                  <p>{intelligence.recommendedAction.reason}</p>
+                  <span className="proposal-note">
+                    {intelligence.recommendedAction.requiresApproval ? "Proposal only · human approval required" : "Proposal only · no action has been taken"}
+                  </span>
+                </div>
+              ) : <p className="detail-muted">No action proposed for this call.</p>}
+            </div>
+            {analysis && <p className="model-note reasoning-model">Reasoning model · {analysis.model_used}</p>}
+          </>
+        ) : (
+          <div className="analysis-empty">
+            <strong>{call.status === "PROCESSING" ? "Analysis in progress" : "No validated analysis yet"}</strong>
+            <span>Call classification and evidence will appear here after processing.</span>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
 function formatDate(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
     return "Date unavailable";
   }
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(date);
+}
+
+function formatSegmentTime(startMs?: number, endMs?: number): string {
+  const format = (value: number) => {
+    const totalSeconds = Math.floor(value / 1_000);
+    return `${Math.floor(totalSeconds / 60)}:${String(totalSeconds % 60).padStart(2, "0")}`;
+  };
+  if (startMs === undefined) return endMs === undefined ? "" : format(endMs);
+  if (endMs === undefined) return format(startMs);
+  return `${format(startMs)}–${format(endMs)}`;
+}
+
+function formatDuration(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return `${minutes}:${String(remainingSeconds).padStart(2, "0")}`;
 }
 
 function formatStatus(status: string): string {

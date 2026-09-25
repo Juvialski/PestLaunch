@@ -1,0 +1,49 @@
+import type { CallAnalysis, CallTranscript } from "../src/shared/calls.js";
+
+export type AiFailureCategory =
+  | "QUOTA"
+  | "RATE_LIMIT"
+  | "TIMEOUT"
+  | "PROVIDER_ERROR"
+  | "MODEL_UNAVAILABLE"
+  | "INVALID_OUTPUT"
+  | "UNSUPPORTED_INPUT"
+  | "CONFIGURATION";
+
+export type CallTranscriptionResult = CallTranscript & { attemptCount: number };
+export type CallAnalysisResult = { analysis: CallAnalysis; modelUsed: string; attemptCount: number };
+
+export type CallsAiService = {
+  transcribe(audio: Buffer, mimeType: string): Promise<CallTranscriptionResult>;
+  analyze(transcript: string): Promise<CallAnalysisResult>;
+};
+
+export class RecoverableAiError extends Error {
+  readonly recoverable = true;
+
+  constructor(
+    message: string,
+    readonly category: AiFailureCategory,
+    readonly attemptCount: number,
+  ) {
+    super(message);
+    this.name = "RecoverableAiError";
+  }
+}
+
+export class AiConfigurationError extends Error {
+  readonly recoverable = false;
+  readonly category = "CONFIGURATION" satisfies AiFailureCategory;
+
+  constructor(message = "GEMINI_API_KEY is not configured on the server.") {
+    super(message);
+    this.name = "AiConfigurationError";
+  }
+}
+
+export function isRecoverableAiError(error: unknown): error is RecoverableAiError {
+  return (
+    error instanceof RecoverableAiError ||
+    (error instanceof Error && "recoverable" in error && error.recoverable === true)
+  );
+}
