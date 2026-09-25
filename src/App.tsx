@@ -81,6 +81,7 @@ export default function App() {
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [demoCustomers, setDemoCustomers] = useState<DemoCustomer[]>([]);
   const [demoCustomersLoaded, setDemoCustomersLoaded] = useState(false);
+  const [isRetryingDemoCustomers, setIsRetryingDemoCustomers] = useState(false);
   const [selectedDemoCustomerId, setSelectedDemoCustomerId] = useState("");
   const [demoResetState, setDemoResetState] = useState<"idle" | "resetting" | "error">("idle");
   const [demoMessage, setDemoMessage] = useState("");
@@ -139,6 +140,23 @@ export default function App() {
     setDemoCustomers(nextCustomers);
     return nextCustomers;
   }, []);
+
+  const retryDemoCustomerList = async () => {
+    if (isRetryingDemoCustomers) return;
+    setIsRetryingDemoCustomers(true);
+    setDemoMessage("");
+    try {
+      await loadDemoCustomers();
+      setDemoCustomersLoaded(true);
+      setDemoResetState("idle");
+    } catch (error) {
+      setDemoCustomersLoaded(true);
+      setDemoResetState("error");
+      setDemoMessage(error instanceof Error ? error.message : "Synthetic demo customers could not be loaded.");
+    } finally {
+      setIsRetryingDemoCustomers(false);
+    }
+  };
 
   const runActionRequest = async (
     callId: string | null,
@@ -478,6 +496,11 @@ export default function App() {
                       ? "Prepare the synthetic demo records before linking a customer."
                       : "Without a link, the call stays unassigned."}
                 </span>
+                {demoResetState === "error" && demoCustomers.length === 0 && (
+                  <button className="text-button customer-list-retry" type="button" onClick={() => void retryDemoCustomerList()} disabled={isRetryingDemoCustomers}>
+                    {isRetryingDemoCustomers ? "Retrying customer list…" : "Retry customer list"}
+                  </button>
+                )}
               </div>
             </div>
 
@@ -559,15 +582,24 @@ export default function App() {
               ) : (
                 <ul className="call-list">
                   {calls.map((call) => {
-                    const linkedCustomer = demoCustomers.find((customer) => customer.id === call.demo_customer_id);
-                    const callName = call.caller_name?.trim() || linkedCustomer?.name || "Unassigned call";
+                    const linkedCustomer = demoCustomers.find((customer) => customer.id === call.demo_customer_id)
+                      ?? (selectedCallId === call.id ? callDetail?.demoCustomer ?? null : null);
+                    const fallbackName = call.demo_customer_id ? "Linked customer" : "Unassigned call";
+                    const callName = call.caller_name?.trim() || linkedCustomer?.name || fallbackName;
+                    const callAccessibleLabel = [
+                      callName,
+                      call.original_filename,
+                      call.duration !== null ? formatDuration(call.duration) : null,
+                      formatStatus(call.status),
+                      formatDate(call.created_at),
+                    ].filter(Boolean).join(", ");
                     return (
                       <li key={call.id}>
                         <button
                           className={`call-row${selectedCallId === call.id ? " is-selected" : ""}`}
                           type="button"
                           aria-current={selectedCallId === call.id ? "true" : undefined}
-                          aria-label={`${callName}, ${formatStatus(call.status)}, ${formatDate(call.created_at)}`}
+                          aria-label={callAccessibleLabel}
                           onClick={() => selectCall(call.id)}
                         >
                           <span className="call-file-icon" aria-hidden="true"><AudioIcon /></span>

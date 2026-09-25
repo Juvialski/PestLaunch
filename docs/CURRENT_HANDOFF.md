@@ -614,7 +614,8 @@ After the merge, `AGENTS.md` was also updated to prefer one bounded real local p
 - Replaced the leaf placeholder with the supplied PestLaunch logo and removed the Interview demo header badge.
 - Reframed the landing view as a call inbox beside a selected-call review workspace.
 - Made recording upload a deliberate, collapsible four-step flow with clear optional caller/customer fields and a visible linked-customer summary.
-- When `caller_name` is blank, the linked synthetic customer's name now labels the inbox row and call detail. Calls without either remain unassigned.
+- When `caller_name` is blank, the linked synthetic customer's name labels the inbox row and call detail. If the customer list fails to load, a linked row remains labeled `Linked customer` until its selected detail resolves the name; calls without a customer link remain `Unassigned call`.
+- The upload form exposes a read-only retry for the synthetic customer list when that lookup fails; it does not reset customer data.
 - Added a call workflow progress strip, more prominent analysis summary and signal badges, separate transcript and evidence panels, and a distinct deterministic action/approval panel.
 - Made approval state, persisted action result, current customer state, and activity timeline visible as separate parts of the reviewed call.
 - Refined loading, retryable error, empty-list, and responsive layout treatments without changing processing or action handlers.

@@ -3,8 +3,8 @@
 ## Pre-interview check
 
 - Open [pestlaunch.onrender.com](https://pestlaunch.onrender.com).
-- For the live walkthrough, click **Reset synthetic demo data**. Confirm Jordan Example is `HEALTHY` / `WON`, Taylor Example is `NEW`, and Morgan Example is `HEALTHY` / `WON`.
-- Confirm the synthetic retention recording is available at `demo/recordings/retention-risk.wav` and that the upload customer selector offers Jordan Example. Enter `Jordan Example` in the optional caller-name field so the inbox row is clearly labelled, then select Jordan as the linked synthetic customer.
+- Open **Add recording** to reveal the upload form. For the live walkthrough, click **Reset demo records** there. Confirm Jordan Example is `HEALTHY` / `WON`, Taylor Example is `NEW`, and Morgan Example is `HEALTHY` / `WON`.
+- Confirm the synthetic retention recording is available at `demo/recordings/retention-risk.wav` and that the upload customer selector offers Jordan Example. Enter `Jordan Example` in the optional caller-name field or select Jordan as the linked synthetic customer; the linked customer name labels the inbox row when the caller name is blank.
 - Verified analyzed backup call: `53d0f8b5-e520-42fb-9c0a-a64fa1212cdd`. For the backup path, skip reset if you want to preserve the current `AT_RISK` customer state. The completed backup action is immutable and must not be approved or executed again.
 - Confirm no call intended for the demo is stuck in `PROCESSING`.
 
