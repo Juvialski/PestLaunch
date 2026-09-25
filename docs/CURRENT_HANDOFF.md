@@ -638,3 +638,35 @@ After the merge, `AGENTS.md` was also updated to prefer one bounded real local p
 - Pixel-level certification at 1440×900, 1366×768, and 1280px, and a mobile screenshot check remain unavailable in this environment.
 - The inbox summary endpoint does not carry per-call classification or priority. Those details appear in the selected-call workspace without adding backend requests or changing the endpoint.
 - A few secondary helper and empty-state captions remain more compact than the primary workflow text.
+
+## 19. UI-R2 — Deployed visual QA and realistic-call polish — 2026-09-25
+
+### Production and reference review
+
+- Starting `origin/main`: `393383bf7a9df61d117dd46843eba74ab30e65a0`.
+- Render's existing `PestLaunch` web service was confirmed live on that exact commit at https://pestlaunch.onrender.com. No service or preview deployment was created.
+- Compared the deployed UI once more with the reference Loom. The call inbox and selected-call workspace retain the reference's clear page title, readable work list, compact status treatments, and direct primary action while fitting the narrower call-review workflow.
+- Opened the verified backup call `53d0f8b5-e520-42fb-9c0a-a64fa1212cdd` read-only. It showed linked Jordan Example, Analyzed / Complaint / HIGH / Cancellation risk, the summary and signals, transcript and evidence, completed retention follow-up, human approval, AT_RISK customer state, and the full activity timeline. No Process, Approve, Reject, or Reset action was triggered.
+- Checked the deployed UI at 1440×900, 1366×768, 1280×800, and 390×844. No horizontal overflow appeared; the mobile layout stacks the inbox and call details vertically.
+
+### External realistic-call sample
+
+- Downloaded the public sample from https://chris-gordon-founder.github.io/websiteaudio/Pest%20Control.mp3 (895,895 bytes), uploaded through the normal UI as `External Pest Control Sample`, and left it unlinked from synthetic customers.
+- Call ID: `21621eaa-0215-4d5f-88c6-c79977e4fd3b`.
+- Ran one live Process call operation. Transcription used `gemini-3.5-transcribe`; analysis used `gemini-3.8-flash`.
+- The result was `BOOKING`, 95% confidence, LOW priority, Positive sentiment, and Resolved outcome, with a New lead signal. The short summary described a new caller booking a roach service appointment for the next day. The transcript was about 1:51 across 13 speaker segments and displayed four evidence quotes. No model recommendation was returned, and deterministic policy found no applicable follow-up; no action was approved or executed. The timeline showed recording received, transcription completed, and call classified.
+
+### Issue found and UI fix
+
+- In the no-action result, the progress strip incorrectly marked Human review as the active step even though no action existed to approve.
+- `buildCallWorkflowSteps` now marks Human review active only for a saved `PENDING` action. Pending, completed, and resolved action states retain their existing progress treatment. This is frontend-only; backend policy, API behavior, Gemini processing, approvals, execution, and persistence are unchanged.
+- Added focused coverage for no-action, pending, and completed progress states.
+- No database migration was created, and `supabase db push` was not run.
+
+### Validation and remaining limits
+
+- `npm test` — 56 passed, 0 failed.
+- `npm run lint` — passed.
+- `npm run build` — passed, including type checks and Vite production build.
+- Inspected the built static UI locally at 1366×768. The local checkout has no `SUPABASE_URL`, so its API-backed recent-call data could not be loaded in that preview; the data-backed visual review was completed against the live deployment instead.
+- A full transcript naturally pushes the timeline below the first mobile viewport. The no-action panel also leaves the `Generate action proposal` control available after the policy reports that no action applies; repeating that check does not create an action.

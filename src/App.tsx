@@ -8,6 +8,7 @@ import type {
 } from "./shared/calls.js";
 import type { AgentActionRow, DemoCustomer } from "./shared/actions.js";
 import { buildCallTimeline } from "./shared/actionTimeline.js";
+import { buildCallWorkflowSteps } from "./shared/callWorkflowProgress.js";
 import { AUDIO_PLAYBACK_ERROR, visibleCallError } from "./shared/callErrorFeedback.js";
 import { MAX_AUDIO_UPLOAD_BYTES } from "./shared/calls.js";
 
@@ -718,18 +719,14 @@ function CallDetailWorkspace({
         ["followUpRequired", "Follow-up required"],
       ].filter(([key]) => intelligence.signals[key as keyof typeof intelligence.signals])
     : [];
-  const completedAction = actions.find((action) => action.status === "COMPLETED");
-  const hasResolvedAction = actions.some((action) => action.status === "COMPLETED" || action.status === "REJECTED");
-  const hasPendingAction = actions.some((action) => action.status === "PENDING");
-  const hasApprovedAction = actions.some((action) => action.status === "APPROVED" || action.status === "EXECUTING");
   const needsReview = call.status === "NEEDS_REVIEW" || call.status === "FAILED";
-  const workflowSteps = [
-    { label: "Call", complete: true, active: false, attention: false },
-    { label: "Transcript", complete: Boolean(transcript), active: isBusy && !transcript, attention: needsReview && !transcript },
-    { label: "AI insights", complete: Boolean(intelligence), active: isBusy && Boolean(transcript), attention: needsReview && Boolean(transcript) && !intelligence },
-    { label: "Human review", complete: hasResolvedAction, active: hasPendingAction || (Boolean(intelligence) && actions.length === 0), attention: false },
-    { label: "Outcome", complete: Boolean(completedAction), active: hasApprovedAction, attention: false },
-  ];
+  const workflowSteps = buildCallWorkflowSteps({
+    hasTranscript: Boolean(transcript),
+    hasIntelligence: Boolean(intelligence),
+    isBusy,
+    needsReview,
+    actionStatuses: actions.map((action) => action.status),
+  });
 
   return (
     <div className="detail-grid">
