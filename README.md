@@ -65,14 +65,24 @@ Fallbacks are for quota exhaustion, transient provider errors, timeouts, or inva
 
 ## P1: Foundation and audio ingestion
 
-This phase implements manual audio upload, private storage, call-record persistence, and basic status display. Transcription and reasoning remain for the next phase.
+P1 implemented manual audio upload, private storage, call-record persistence, and basic status display.
+
+## P2: Gemini transcription and call intelligence
+
+P2 adds a focused call-detail workspace and this explicit processing path:
+
+```text
+select uploaded call -> Process call -> transcript -> validated analysis -> persisted intelligence
+```
+
+Opening, selecting, refreshing, or loading a call never invokes Gemini. Only `POST /api/calls/:id/process` starts processing. A valid analyzed call returns its saved result; retries reuse a valid saved transcript. Gemini fallbacks are bounded and logged. Exhausted recoverable AI failures become `NEEDS_REVIEW`; storage and application failures become `FAILED`. Proposed actions are display-only in P2.
 
 ### Local setup
 
 Requirements: Node.js 22 or newer and an existing Supabase project.
 
 1. Install dependencies with `npm ci`.
-2. Copy `.env.example` to `.env` and set `SUPABASE_URL` and `SUPABASE_SECRET_KEY` from the Supabase project. Keep the secret key server-side; do not put it in a `VITE_` variable.
+2. Copy `.env.example` to `.env` and set `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, and `GEMINI_API_KEY`. Keep both privileged Supabase and Gemini keys server-side; never put either in a `VITE_` variable.
 3. The live PestLaunch Supabase project is already initialized with the five prototype tables and the private `call-recordings` bucket. **Do not run `supabase db push` against the live project without first reading `docs/CURRENT_HANDOFF.md`**, because hosted migration history was created directly and does not currently match the repository migration filename.
 4. Run `npm.cmd run dev` and open the Vite URL printed in the terminal.
 
@@ -82,20 +92,26 @@ Current API:
 
 - `POST /api/calls/ingest` — upload one MP3, WAV, M4A, or WebM recording (maximum 25 MiB).
 - `GET /api/calls` — list the 50 most recent calls.
-- `GET /api/calls/:id` — retrieve one call record.
+- `GET /api/calls/:id` — retrieve a call with its persisted transcript and analysis.
+- `GET /api/calls/:id/audio` — redirect to a short-lived signed URL for the private recording.
+- `POST /api/calls/:id/process` — explicitly transcribe and analyze one call.
 
 Audio is uploaded before its `calls` row is inserted. If row creation fails, the API attempts to remove the stored object and returns an error instead of claiming success.
 
 Available scripts:
 
 - `npm.cmd run dev` — run the API and Vite development server.
-- `npm.cmd test` — run focused audio-ingestion API tests.
+- `npm.cmd test` — run focused audio-ingestion and call-processing API tests (AI is injected in tests).
 - `npm.cmd run typecheck` — check client, server, and test TypeScript.
 - `npm.cmd run lint` — run ESLint.
 - `npm.cmd run build` — typecheck and create the production client and server build.
 - `npm.cmd start` — serve the production build on `PORT` (default `3000`).
 
-`render.yaml` defines a single Render Node web service. The live service requires devDependencies during its build, so the working Render build command is `npm ci --include=dev && npm run build`; this repo setting should be reconciled in the next bounded implementation phase. Runtime configuration uses `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `SUPABASE_STORAGE_BUCKET`, and `GEMINI_API_KEY`.
+`render.yaml` defines one Render Node web service. Its build command is `npm ci --include=dev && npm run build`, and its start command remains `npm start`. Runtime configuration uses `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `SUPABASE_STORAGE_BUCKET`, and the server-only `GEMINI_API_KEY`.
+
+The Gemini model routing lives in `server/geminiService.ts`. Transcription uses `gemini-3.5-transcribe` then `gemini-3.8-flash`; reasoning uses `gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.6-flash`, and `gemini-3.5-flash`. Model attempts do not repeat automatically.
+
+P2 required no migration. Do not run `supabase db push` against the hosted project. The next phase is **P3: deterministic proposal, human approval, demo execution, and audit trail**.
 
 ## Planning
 

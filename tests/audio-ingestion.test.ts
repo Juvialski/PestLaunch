@@ -4,6 +4,12 @@ import express from "express";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import request from "supertest";
 import { createCallsRouter } from "../server/callsRouter.js";
+import type { CallsAiService } from "../server/aiTypes.js";
+
+const unusedAi: CallsAiService = {
+  async transcribe() { throw new Error("Audio ingestion tests must not transcribe."); },
+  async analyze() { throw new Error("Audio ingestion tests must not analyze."); },
+};
 
 type FakeCall = {
   id: string;
@@ -63,6 +69,17 @@ function createFakeSupabase(options: FakeClientOptions = {}) {
       },
     },
     from(table: string) {
+      if (table === "transcripts" || table === "call_analysis") {
+        return {
+          select() {
+            return {
+              eq() {
+                return { async maybeSingle() { return { data: null, error: null }; } };
+              },
+            };
+          },
+        };
+      }
       assert.equal(table, "calls");
       return {
         insert(record: Record<string, unknown>) {
@@ -120,6 +137,7 @@ function createTestApp(supabase: SupabaseClient, maxUploadBytes = 1024) {
     createCallsRouter({
       supabase,
       bucketName: "call-recordings",
+      ai: unusedAi,
       maxUploadBytes,
       logger: { error: () => undefined },
     }),

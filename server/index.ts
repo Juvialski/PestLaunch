@@ -2,16 +2,18 @@ import "dotenv/config";
 import path from "node:path";
 import express from "express";
 import { createCallsRouter } from "./callsRouter.js";
+import { createGeminiService } from "./geminiService.js";
 import { createSupabaseAdminClient } from "./supabaseClient.js";
 
 export function createApp() {
   const app = express();
   const supabase = createSupabaseAdminClient();
   const bucketName = process.env.SUPABASE_STORAGE_BUCKET?.trim() || "call-recordings";
+  const ai = createGeminiService(process.env.GEMINI_API_KEY);
 
   app.disable("x-powered-by");
   app.use(express.json({ limit: "32kb" }));
-  app.use("/api/calls", createCallsRouter({ supabase, bucketName }));
+  app.use("/api/calls", createCallsRouter({ supabase, bucketName, ai }));
   app.use("/api", (_request, response) => {
     response.status(404).json({ error: { code: "NOT_FOUND", message: "API route not found." } });
   });
