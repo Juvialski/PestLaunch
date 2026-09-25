@@ -183,3 +183,45 @@ test("timeline retains an earlier failed attempt after a safe retry completes", 
   assert.ok(entries.some((entry) => entry.label === "Action execution failed" && entry.occurredAt === "2026-09-25T00:04:00.000Z"));
   assert.ok(entries.some((entry) => entry.label === "Retention follow-up created" && entry.occurredAt === "2026-09-25T00:05:00.000Z"));
 });
+
+test("timeline records sent and failed high-risk alert outcomes from persisted notification timestamps", () => {
+  const sentAt = "2026-09-25T00:02:10.000Z";
+  const failedAt = "2026-09-25T00:02:12.000Z";
+  const entries = buildCallTimeline({
+    call,
+    transcript,
+    analysis,
+    demoCustomer: customer,
+    actions: [],
+    notifications: [
+      {
+        id: "c0000000-0000-4000-8000-000000000003",
+        call_id: CALL_ID,
+        notification_type: "HIGH_RISK_ALERT",
+        provider: "BREVO",
+        status: "SENT",
+        provider_message_id: "<sent-message>",
+        attempt_count: 1,
+        error_message: null,
+        created_at: "2026-09-25T00:02:08.000Z",
+        sent_at: sentAt,
+      },
+      {
+        id: "c0000000-0000-4000-8000-000000000004",
+        call_id: CALL_ID,
+        notification_type: "HIGH_RISK_ALERT",
+        provider: "BREVO",
+        status: "FAILED",
+        provider_message_id: null,
+        attempt_count: 1,
+        error_message: "Brevo returned HTTP 503.",
+        created_at: failedAt,
+        sent_at: null,
+      },
+    ],
+  } as never);
+
+  assert.ok(entries.some((entry) => entry.label === "High-risk alert sent" && entry.occurredAt === sentAt));
+  assert.ok(entries.some((entry) => entry.label === "High-risk alert failed" && entry.occurredAt === failedAt));
+  assert.ok(entries.every((entry) => !entry.detail?.includes("Brevo returned HTTP 503")));
+});

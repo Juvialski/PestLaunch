@@ -80,7 +80,7 @@ function createFakeSupabase(options: FakeClientOptions = {}) {
           },
         };
       }
-      if (table === "agent_actions") {
+      if (table === "agent_actions" || table === "call_notifications") {
         return {
           select() {
             return {

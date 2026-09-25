@@ -1,5 +1,6 @@
 import type { AgentActionRow, DemoCustomer } from "./actions.js";
 import type { CallAnalysisRow, CallRecord, CallTranscriptRow } from "./calls.js";
+import type { CallNotificationSummary } from "./notifications.js";
 
 export type CallTimelineEvent = {
   label: string;
@@ -13,6 +14,7 @@ export type CallTimelineSource = {
   analysis: CallAnalysisRow | null;
   demoCustomer: DemoCustomer | null;
   actions: AgentActionRow[];
+  notifications?: CallNotificationSummary[];
 };
 
 const COMPLETION_LABELS: Record<AgentActionRow["action_type"], string> = {
@@ -41,6 +43,28 @@ export function buildCallTimeline(source: CallTimelineSource): CallTimelineEvent
     if (source.analysis.analysis_json.signals.cancellationRisk || source.analysis.analysis_json.callType === "CANCELLATION") {
       addEvent(events, source.analysis.created_at, "Cancellation risk detected");
     }
+  }
+
+  const notifications = source.notifications ?? [];
+  const sentNotifications = notifications.filter((notification) => notification.status === "SENT");
+  const failedNotifications = notifications.filter((notification) => notification.status === "FAILED");
+  const pendingNotifications = notifications.filter((notification) => notification.status === "PENDING");
+  if (sentNotifications.length > 0) {
+    const sentAt = sentNotifications.map((notification) => notification.sent_at).filter((value): value is string => Boolean(value)).at(-1);
+    addEvent(
+      events,
+      sentAt,
+      "High-risk alert sent",
+      sentNotifications.length === 1
+        ? "Brevo accepted the escalation email."
+        : `Brevo accepted ${sentNotifications.length} escalation emails.`,
+    );
+  }
+  if (failedNotifications.length > 0) {
+    addEvent(events, failedNotifications.at(-1)?.created_at, "High-risk alert failed", "The call analysis remains available.");
+  }
+  if (pendingNotifications.length > 0) {
+    addEvent(events, pendingNotifications.at(-1)?.created_at, "High-risk alert pending", "Delivery to configured contacts is pending.");
   }
 
   for (const action of source.actions) {

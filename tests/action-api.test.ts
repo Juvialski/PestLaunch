@@ -19,6 +19,7 @@ type FakeState = {
   transcripts: CallTranscriptRow[];
   analyses: CallAnalysisRow[];
   actions: AgentActionRow[];
+  notifications: Record<string, unknown>[];
   customers: DemoCustomer[];
   customerMutations: number;
   failCustomerUpdates: number;
@@ -117,6 +118,7 @@ function makeMemory(options: {
     transcripts: options.transcript ? [options.transcript] : [transcriptRow()],
     analyses: options.analysis === null ? [] : [options.analysis ?? analysisRow()],
     actions: [],
+    notifications: [],
     customers: [...(options.customers ?? []), ...(options.otherCustomer ? [otherCustomer] : [])],
     customerMutations: 0,
     failCustomerUpdates: options.failCustomerUpdates ?? 0,
@@ -232,6 +234,7 @@ function makeMemory(options: {
         transcripts: state.transcripts,
         call_analysis: state.analyses,
         agent_actions: state.actions,
+        call_notifications: state.notifications,
         demo_customers: state.customers,
       };
       const rows = tables[this.table];

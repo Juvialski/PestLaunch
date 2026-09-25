@@ -15,8 +15,10 @@ import {
 } from "../src/shared/calls.js";
 import { MAX_AUDIO_UPLOAD_BYTES } from "../src/shared/calls.js";
 import { AiConfigurationError, isRecoverableAiError, RecoverableAiError, type CallsAiService } from "./aiTypes.js";
-import { deriveCallActionPolicyState } from "./actionPolicy.js";
+import { deriveCallActionPolicyState, proposeDeterministicAction } from "./actionPolicy.js";
 import { formatMaxUploadSize, validateAudioUpload } from "./audioValidation.js";
+import { CallNotificationRowSchema, toCallNotificationSummary, type CallNotificationSummary } from "../src/shared/notifications.js";
+import type { HighRiskAlertDispatcher } from "./highRiskAlert.js";
 
 const CALL_SUMMARY_COLUMNS =
   "id,caller_name,demo_customer_id,original_filename,mime_type,status,duration,created_at,updated_at";
@@ -30,6 +32,8 @@ type CallDetailPayload = {
   analysis: CallAnalysisRow | null;
   demoCustomer: DemoCustomer | null;
   actions: AgentActionRow[];
+  notifications: CallNotificationSummary[];
+  highRiskAlertConfigured: boolean;
   actionPolicyState: CallActionPolicyState;
 };
 
@@ -39,6 +43,7 @@ export type CallsRouterDependencies = {
   supabase: SupabaseClient;
   bucketName: string;
   ai: CallsAiService;
+  highRiskAlert?: HighRiskAlertDispatcher;
   maxUploadBytes?: number;
   logger?: RouterLogger;
 };
@@ -47,12 +52,14 @@ export function createCallsRouter({
   supabase,
   bucketName,
   ai,
+  highRiskAlert,
   maxUploadBytes = MAX_AUDIO_UPLOAD_BYTES,
   logger = console,
 }: CallsRouterDependencies): express.Router {
   if (!Number.isSafeInteger(maxUploadBytes) || maxUploadBytes <= 0) {
     throw new Error("maxUploadBytes must be a positive safe integer.");
   }
+  const highRiskAlertConfigured = highRiskAlert?.hasConfiguredRecipients ?? false;
 
   const router = express.Router();
   const upload = multer({
@@ -199,7 +206,7 @@ export function createCallsRouter({
       return;
     }
 
-    const initialDetail = await loadCallDetail(supabase, callResult.call, logger);
+    const initialDetail = await loadCallDetail(supabase, callResult.call, logger, highRiskAlertConfigured);
     if (!initialDetail) {
       sendError(response, 503, "CALL_INTELLIGENCE_UNAVAILABLE", "Call intelligence could not be loaded. Please try again.");
       return;
@@ -216,6 +223,14 @@ export function createCallsRouter({
         return;
       }
 
+      await dispatchHighRiskAlert(
+        highRiskAlert,
+        callResult.call,
+        initialDetail.analysis.analysis_json,
+        initialDetail.demoCustomer,
+        logger,
+      );
+
       const recovered = await setCallStatus(supabase, id, callResult.call.status, "ANALYZED", null);
       if (recovered.error) {
         logger.error("Call status could not be reconciled with its persisted analysis.", recovered.error);
@@ -223,14 +238,14 @@ export function createCallsRouter({
         return;
       }
       if (recovered.call) {
-        const recoveredDetail = await loadCallDetail(supabase, recovered.call, logger);
+        const recoveredDetail = await loadCallDetail(supabase, recovered.call, logger, highRiskAlertConfigured);
         if (recoveredDetail) {
           response.json(recoveredDetail);
           return;
         }
       }
 
-      const latest = await loadCallDetailById(supabase, id, logger);
+      const latest = await loadCallDetailById(supabase, id, logger, highRiskAlertConfigured);
       if (latest?.call.status === "ANALYZED" && latest.analysis) {
         response.json(latest);
         return;
@@ -252,7 +267,7 @@ export function createCallsRouter({
       return;
     }
     if (!processingCall.call) {
-      const latest = await loadCallDetailById(supabase, id, logger);
+      const latest = await loadCallDetailById(supabase, id, logger, highRiskAlertConfigured);
       sendDetailError(
         response,
         409,
@@ -363,6 +378,8 @@ export function createCallsRouter({
         throw new ProcessingFailure("The call analysis could not be saved. Please retry processing.", "ANALYSIS_SAVE_FAILED");
       }
 
+      await dispatchHighRiskAlert(highRiskAlert, currentCall, validatedAnalysis.data, initialDetail.demoCustomer, logger);
+
       const analyzed = await setCallStatus(supabase, id, currentCall.status, "ANALYZED", null);
       if (analyzed.error || !analyzed.call) {
         logger.error("Call status could not be finalized after analysis.", analyzed.error);
@@ -370,7 +387,7 @@ export function createCallsRouter({
       }
       currentCall = analyzed.call;
 
-      const detail = await loadCallDetail(supabase, analyzed.call, logger);
+      const detail = await loadCallDetail(supabase, analyzed.call, logger, highRiskAlertConfigured);
       if (!detail) {
         sendError(response, 503, "CALL_INTELLIGENCE_UNAVAILABLE", "Call intelligence was saved but could not be reloaded.");
         return;
@@ -385,7 +402,7 @@ export function createCallsRouter({
       const message = safeProcessingError(error);
       const failed = await setCallStatus(supabase, id, currentCall.status, status, message);
       if (failed.error) logger.error("Call processing failure state could not be persisted.", failed.error);
-      const detail = await loadCallDetailById(supabase, id, logger);
+      const detail = await loadCallDetailById(supabase, id, logger, highRiskAlertConfigured);
       sendDetailError(
         response,
         recoverable ? 422 : 503,
@@ -448,7 +465,7 @@ export function createCallsRouter({
       return;
     }
 
-    const detail = await loadCallDetail(supabase, result.call, logger);
+    const detail = await loadCallDetail(supabase, result.call, logger, highRiskAlertConfigured);
     if (!detail) {
       sendError(response, 503, "CALL_INTELLIGENCE_UNAVAILABLE", "Call intelligence could not be loaded. Please try again.");
       return;
@@ -542,21 +559,24 @@ async function loadCallDetail(
   supabase: SupabaseClient,
   call: CallRecord,
   logger: RouterLogger,
+  highRiskAlertConfigured = false,
 ): Promise<CallDetailPayload | null> {
   try {
-    const [transcriptResult, analysisResult, actionResult, customerResult] = await Promise.all([
+    const [transcriptResult, analysisResult, actionResult, notificationResult, customerResult] = await Promise.all([
       supabase.from("transcripts").select("*").eq("call_id", call.id).maybeSingle(),
       supabase.from("call_analysis").select("*").eq("call_id", call.id).maybeSingle(),
       supabase.from("agent_actions").select("*").eq("call_id", call.id).order("created_at", { ascending: true }).limit(50),
+      supabase.from("call_notifications").select("*").eq("call_id", call.id).order("created_at", { ascending: true }).limit(50),
       call.demo_customer_id
         ? supabase.from("demo_customers").select("*").eq("id", call.demo_customer_id).maybeSingle()
         : Promise.resolve({ data: null, error: null }),
     ]);
-    if (transcriptResult.error || analysisResult.error || actionResult.error || customerResult.error) {
+    if (transcriptResult.error || analysisResult.error || actionResult.error || notificationResult.error || customerResult.error) {
       logger.error("Persisted call detail could not be loaded.", {
         transcript: transcriptResult.error,
         analysis: analysisResult.error,
         actions: actionResult.error,
+        notifications: notificationResult.error,
         demoCustomer: customerResult.error,
       });
       return null;
@@ -573,6 +593,16 @@ async function loadCallDetail(
         return null;
       }
       actions.push(parsed.data);
+    }
+    const notificationRows = Array.isArray(notificationResult.data) ? notificationResult.data : [];
+    const notifications: CallNotificationSummary[] = [];
+    for (const row of notificationRows) {
+      const parsed = CallNotificationRowSchema.safeParse(row);
+      if (!parsed.success || parsed.data.call_id !== call.id) {
+        logger.error("Persisted call notification failed runtime validation.");
+        return null;
+      }
+      notifications.push(toCallNotificationSummary(parsed.data));
     }
     const parsedCustomer = customerResult.data ? DemoCustomerSchema.safeParse(customerResult.data) : null;
     if (parsedCustomer && !parsedCustomer.success) {
@@ -592,6 +622,8 @@ async function loadCallDetail(
       transcript,
       demoCustomer,
       actions,
+      notifications,
+      highRiskAlertConfigured,
       analysis: validatedAnalysis,
       actionPolicyState: deriveCallActionPolicyState(
         analysisIsGrounded ? analysis?.analysis_json ?? null : null,
@@ -605,14 +637,39 @@ async function loadCallDetail(
   }
 }
 
+async function dispatchHighRiskAlert(
+  dispatcher: HighRiskAlertDispatcher | undefined,
+  call: CallRecord,
+  analysis: CallAnalysisRow["analysis_json"],
+  customer: DemoCustomer | null,
+  logger: RouterLogger,
+): Promise<void> {
+  if (!dispatcher) return;
+  const action = proposeDeterministicAction(analysis, customer);
+  try {
+    await dispatcher.dispatch({
+      callId: call.id,
+      callerName: call.caller_name,
+      linkedCustomerName: customer?.name ?? null,
+      analysis,
+      deterministicAction: action
+        ? { title: action.title, reason: action.reason, requiresApproval: action.requiresApproval }
+        : null,
+    });
+  } catch {
+    logger.error("High-risk alert could not be recorded; call analysis remains available.");
+  }
+}
+
 async function loadCallDetailById(
   supabase: SupabaseClient,
   id: string,
   logger: RouterLogger,
+  highRiskAlertConfigured = false,
 ): Promise<CallDetailPayload | null> {
   const result = await loadCall(supabase, id);
   if (result.error || !result.call) return null;
-  return loadCallDetail(supabase, result.call, logger);
+  return loadCallDetail(supabase, result.call, logger, highRiskAlertConfigured);
 }
 
 function readTranscriptRow(value: unknown): CallTranscriptRow | null {
