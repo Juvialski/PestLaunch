@@ -39,51 +39,13 @@ export function createGeminiService(
   return {
     async transcribe(audio, mimeType) {
       if (!client) throw new AiConfigurationError();
-      let uploadedFile: Awaited<ReturnType<typeof client.files.upload>> | null = null;
       let attemptCount = 0;
 
       try {
-        const startedAt = Date.now();
-        try {
-          uploadedFile = await client.files.upload({
-            file: new Blob([Uint8Array.from(audio)], { type: mimeType }),
-            config: {
-              mimeType,
-              displayName: "PestLaunch call recording",
-              httpOptions: SDK_HTTP_OPTIONS,
-            },
-          });
-          logger.info("Gemini file upload completed.", {
-            task: "transcription_upload",
-            attempt: 1,
-            result: "success",
-            failureCategory: null,
-            durationMs: Date.now() - startedAt,
-          });
-        } catch (error) {
-          const category = classifyGeminiFileUploadFailure(error);
-          logger.warn("Gemini file upload failed.", {
-            task: "transcription_upload",
-            attempt: 1,
-            result: "failure",
-            failureCategory: category,
-            error: errorMessage(error),
-            durationMs: Date.now() - startedAt,
-          });
-          if (category === "CONFIGURATION") {
-            throw new AiConfigurationError("Gemini credentials were rejected while uploading the recording.");
-          }
-          throw new RecoverableAiError(
-            geminiFileUploadFailureMessage(category),
-            category,
-            0,
-          );
-        }
-
-        if (!uploadedFile.uri) {
-          throw new RecoverableAiError("Gemini did not return an audio reference.", "INVALID_OUTPUT", 0);
-        }
-
+        // The app accepts recordings up to 25 MiB, well below the Gemini Interactions
+        // inline-data limit. Sending transient audio inline avoids an unnecessary Files
+        // API round trip and its separate upload endpoint.
+        const inlineAudio = audio.toString("base64");
         let lastCategory: AiFailureCategory = "INVALID_OUTPUT";
 
         for (let index = 0; index < GEMINI_MODELS.transcription.length; index += 1) {
@@ -95,7 +57,7 @@ export function createGeminiService(
               model === GEMINI_MODELS.transcription[0]
                 ? {
                     model,
-                    input: [{ type: "audio", uri: uploadedFile.uri, mime_type: mimeType }],
+                    input: [{ type: "audio", data: inlineAudio, mime_type: mimeType }],
                     generation_config: {
                       transcription_config: {
                         mode: {
@@ -113,7 +75,7 @@ export function createGeminiService(
                         type: "text",
                         text: TRANSCRIPTION_FALLBACK_PROMPT,
                       },
-                      { type: "audio", uri: uploadedFile.uri, mime_type: mimeType },
+                      { type: "audio", data: inlineAudio, mime_type: mimeType },
                     ],
                     response_format: {
                       type: "text",
@@ -168,19 +130,6 @@ export function createGeminiService(
         if (error instanceof RecoverableAiError || error instanceof AiConfigurationError) throw error;
         const category = classifyProviderFailure(error);
         throw new RecoverableAiError("Gemini transcription could not be completed.", category, attemptCount);
-      } finally {
-        if (uploadedFile?.name) {
-          try {
-            await client.files.delete({ name: uploadedFile.name });
-          } catch (error) {
-            logger.warn("Temporary Gemini audio file cleanup failed.", {
-              task: "transcription_cleanup",
-              result: "failure",
-              failureCategory: classifyProviderFailure(error),
-              error: errorMessage(error),
-            });
-          }
-        }
       }
     },
 
