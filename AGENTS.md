@@ -54,3 +54,7 @@ Do not hard-code model logic throughout the codebase. Centralize provider/model 
 ## Validation
 
 Use proportional validation focused on the changed surface. Once the main path is working, prioritize end-to-end reliability over broad speculative testing. Do not scan `node_modules`, deploy broad final-review subagents, or repeatedly rerun the full validation suite unless a relevant change requires it.
+
+For provider/API transport fixes, after mocked tests are stable, prefer one bounded real smoke test locally when the required local credentials and dependencies are already available. Do not burn quota with repeated experiments.
+
+Do not make a temporary PR deployment a default merge prerequisite. When a bounded fix has strong local validation and the normal deployment tracks `main`, it is acceptable to merge with exact-head protection, verify the existing deployment immediately afterward, and hotfix if the real environment exposes a problem.
