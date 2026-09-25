@@ -16,8 +16,8 @@ import { CallProcessingProgress } from "./components/CallProcessingProgress.js";
 import {
   CallProcessingCoordinator,
   mapCallProcessingProgress,
-  pollBelongsToSelectionGeneration,
   pollCallUntilTerminal,
+  shouldAwaitProcessingPoll,
   shouldProposeAfterProcessing,
   type ProcessTrigger,
 } from "./shared/callProcessingLifecycle.js";
@@ -287,7 +287,8 @@ export default function App() {
   const settleProcessingPoll = async (callId: string, selectionGeneration: number) => {
     const activePoll = processingPollRef.current;
     if (!activePoll || activePoll.callId !== callId) return;
-    if (pollBelongsToSelectionGeneration(activePoll, callId, selectionGeneration)) activePoll.controller.abort();
+    if (!shouldAwaitProcessingPoll(activePoll, callId, selectionGeneration)) return;
+    activePoll.controller.abort();
     await activePoll.completion;
     if (processingPollRef.current === activePoll) processingPollRef.current = null;
   };

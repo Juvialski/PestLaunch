@@ -3,9 +3,9 @@ import test from "node:test";
 import {
   CallProcessingCoordinator,
   mapCallProcessingProgress,
-  pollBelongsToSelectionGeneration,
   pollCallUntilTerminal,
   shouldProposeAfterProcessing,
+  shouldAwaitProcessingPoll,
 } from "../src/shared/callProcessingLifecycle.js";
 import type { CallStatus } from "../src/shared/calls.js";
 
@@ -65,9 +65,9 @@ test("an explicit processing request continues the proposal after selection chan
 test("a process attempt cannot stop a poll created for a newer selection generation", () => {
   const activePoll = { callId: CALL_ID, selectionGeneration: 3 };
 
-  assert.equal(pollBelongsToSelectionGeneration(activePoll, CALL_ID, 3), true);
-  assert.equal(pollBelongsToSelectionGeneration(activePoll, CALL_ID, 4), false);
-  assert.equal(pollBelongsToSelectionGeneration(activePoll, "different-call", 3), false);
+  assert.equal(shouldAwaitProcessingPoll(activePoll, CALL_ID, 3), true);
+  assert.equal(shouldAwaitProcessingPoll(activePoll, CALL_ID, 4), false);
+  assert.equal(shouldAwaitProcessingPoll(activePoll, "different-call", 3), false);
 });
 
 test("an analyzed call cannot be restarted as an upload or recovery", async () => {

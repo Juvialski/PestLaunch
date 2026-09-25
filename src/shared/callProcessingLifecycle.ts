@@ -11,7 +11,7 @@ export function shouldProposeAfterProcessing(trigger: ProcessTrigger): boolean {
   return trigger !== "page-load";
 }
 
-export function pollBelongsToSelectionGeneration(
+export function shouldAwaitProcessingPoll(
   poll: { callId: string; selectionGeneration: number },
   callId: string,
   selectionGeneration: number,
