@@ -61,7 +61,7 @@ export function createGeminiService(
             durationMs: Date.now() - startedAt,
           });
         } catch (error) {
-          const category = classifyProviderFailure(error);
+          const category = classifyGeminiFileUploadFailure(error);
           logger.warn("Gemini file upload failed.", {
             task: "transcription_upload",
             attempt: 1,
@@ -74,7 +74,7 @@ export function createGeminiService(
             throw new AiConfigurationError("Gemini credentials were rejected while uploading the recording.");
           }
           throw new RecoverableAiError(
-            "Gemini could not accept the recording. Check the audio and retry.",
+            geminiFileUploadFailureMessage(category),
             category,
             0,
           );
@@ -388,6 +388,31 @@ function classifyProviderFailure(error: unknown): AiFailureCategory {
   if (status === 404 || /model.*(not found|unavailable)|not found.*model/.test(message)) return "MODEL_UNAVAILABLE";
   if ((status >= 500 && status <= 599) || status === 0 || !Number.isFinite(status)) return "PROVIDER_ERROR";
   return "PROVIDER_ERROR";
+}
+
+export function classifyGeminiFileUploadFailure(error: unknown): AiFailureCategory {
+  const category = classifyProviderFailure(error);
+  return category === "MODEL_UNAVAILABLE" ? "PROVIDER_ERROR" : category;
+}
+
+export function geminiFileUploadFailureMessage(category: AiFailureCategory): string {
+  switch (category) {
+    case "UNSUPPORTED_INPUT":
+      return "Gemini could not read this audio. Check the file format and retry processing.";
+    case "QUOTA":
+      return "Gemini has reached its current request quota. Please wait before retrying processing.";
+    case "RATE_LIMIT":
+      return "Gemini is temporarily limiting requests. Please wait before retrying processing.";
+    case "TIMEOUT":
+      return "Gemini could not finish receiving the recording. Please retry processing.";
+    case "PROVIDER_ERROR":
+    case "MODEL_UNAVAILABLE":
+      return "Gemini could not receive the recording. Check provider availability, then retry.";
+    case "INVALID_OUTPUT":
+      return "Gemini did not return a usable recording reference. Please retry processing.";
+    case "CONFIGURATION":
+      return "Gemini provider configuration needs attention. Please contact the administrator.";
+  }
 }
 
 function errorMessage(error: unknown): string {

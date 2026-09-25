@@ -5,6 +5,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import request from "supertest";
 import type { CallAnalysis, CallAnalysisRow, CallTranscriptRow } from "../src/shared/calls.js";
 import type { AgentActionRow, DemoCustomer } from "../src/shared/actions.js";
+import { AiConfigurationError } from "../server/aiTypes.js";
 import type { CallsAiService, CallTranscriptionResult } from "../server/aiTypes.js";
 import { createCallsRouter } from "../server/callsRouter.js";
 
@@ -427,6 +428,20 @@ test("exhausted recoverable AI failures leave the call in NEEDS_REVIEW", async (
   assert.equal(response.body.call.status, "NEEDS_REVIEW");
   assert.match(response.body.call.last_error, /Gemini options exhausted/);
   assert.equal(memory.calls.analysisWrites, 0);
+});
+
+test("Gemini configuration failures give a safe administrator next step", async () => {
+  const memory = createMemorySupabase();
+  const ai = createAiDouble({ transcribeError: new AiConfigurationError() });
+
+  const response = await request(createTestApp(memory.supabase, ai.ai))
+    .post(`/api/calls/${CALL_ID}/process`);
+
+  assert.equal(response.status, 503);
+  assert.equal(response.body.call.status, "FAILED");
+  assert.equal(response.body.error.message, "AI processing is unavailable right now. Please contact the administrator.");
+  assert.equal(response.body.call.last_error, response.body.error.message);
+  assert.doesNotMatch(response.body.error.message, /GEMINI_API_KEY|credential/i);
 });
 
 test("a private storage failure marks the call FAILED without invoking Gemini", async () => {

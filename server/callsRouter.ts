@@ -14,7 +14,7 @@ import {
   type CallTranscriptRow,
 } from "../src/shared/calls.js";
 import { MAX_AUDIO_UPLOAD_BYTES } from "../src/shared/calls.js";
-import { isRecoverableAiError, RecoverableAiError, type CallsAiService } from "./aiTypes.js";
+import { AiConfigurationError, isRecoverableAiError, RecoverableAiError, type CallsAiService } from "./aiTypes.js";
 import { formatMaxUploadSize, validateAudioUpload } from "./audioValidation.js";
 
 const CALL_SUMMARY_COLUMNS =
@@ -702,8 +702,10 @@ class ProcessingFailure extends Error {
 
 function safeProcessingError(error: unknown): string {
   if (error instanceof ProcessingFailure) return error.message;
+  if (error instanceof AiConfigurationError) {
+    return "AI processing is unavailable right now. Please contact the administrator.";
+  }
   if (isRecoverableAiError(error) && error.message.trim()) return error.message.slice(0, 500);
-  if (error instanceof Error && error.name === "AiConfigurationError") return error.message;
   return "Call processing failed because of an internal error. Please retry.";
 }
 
