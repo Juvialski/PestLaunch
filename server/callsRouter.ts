@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import express, { type ErrorRequestHandler } from "express";
 import multer from "multer";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { AgentActionRowSchema, DemoCustomerSchema, type AgentActionRow, type DemoCustomer } from "../src/shared/actions.js";
 import {
   analysisEvidenceIsGrounded,
   CallAnalysisSchema,
@@ -26,6 +27,8 @@ type CallDetailPayload = {
   call: CallRecord;
   transcript: CallTranscriptRow | null;
   analysis: CallAnalysisRow | null;
+  demoCustomer: DemoCustomer | null;
+  actions: AgentActionRow[];
 };
 
 type RouterLogger = Pick<Console, "error"> & Partial<Pick<Console, "info" | "warn">>;
@@ -539,23 +542,46 @@ async function loadCallDetail(
   logger: RouterLogger,
 ): Promise<CallDetailPayload | null> {
   try {
-    const [transcriptResult, analysisResult] = await Promise.all([
+    const [transcriptResult, analysisResult, actionResult, customerResult] = await Promise.all([
       supabase.from("transcripts").select("*").eq("call_id", call.id).maybeSingle(),
       supabase.from("call_analysis").select("*").eq("call_id", call.id).maybeSingle(),
+      supabase.from("agent_actions").select("*").eq("call_id", call.id).order("created_at", { ascending: true }).limit(50),
+      call.demo_customer_id
+        ? supabase.from("demo_customers").select("*").eq("id", call.demo_customer_id).maybeSingle()
+        : Promise.resolve({ data: null, error: null }),
     ]);
-    if (transcriptResult.error || analysisResult.error) {
-      logger.error("Persisted call intelligence could not be loaded.", {
+    if (transcriptResult.error || analysisResult.error || actionResult.error || customerResult.error) {
+      logger.error("Persisted call detail could not be loaded.", {
         transcript: transcriptResult.error,
         analysis: analysisResult.error,
+        actions: actionResult.error,
+        demoCustomer: customerResult.error,
       });
       return null;
     }
 
     const transcript = readTranscriptRow(transcriptResult.data);
     const analysis = readAnalysisRow(analysisResult.data);
+    const actionRows = Array.isArray(actionResult.data) ? actionResult.data : [];
+    const actions: AgentActionRow[] = [];
+    for (const row of actionRows) {
+      const parsed = AgentActionRowSchema.safeParse(row);
+      if (!parsed.success || parsed.data.call_id !== call.id) {
+        logger.error("Persisted agent action failed runtime validation.");
+        return null;
+      }
+      actions.push(parsed.data);
+    }
+    const parsedCustomer = customerResult.data ? DemoCustomerSchema.safeParse(customerResult.data) : null;
+    if (parsedCustomer && !parsedCustomer.success) {
+      logger.error("Linked demo customer failed runtime validation.");
+      return null;
+    }
     return {
       call,
       transcript,
+      demoCustomer: parsedCustomer?.success ? parsedCustomer.data : null,
+      actions,
       analysis:
         transcript && analysis && !analysisEvidenceIsGrounded(analysis.analysis_json, transcript.text)
           ? null

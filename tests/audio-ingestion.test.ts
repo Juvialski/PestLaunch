@@ -69,12 +69,27 @@ function createFakeSupabase(options: FakeClientOptions = {}) {
       },
     },
     from(table: string) {
-      if (table === "transcripts" || table === "call_analysis") {
+      if (table === "transcripts" || table === "call_analysis" || table === "demo_customers") {
         return {
           select() {
             return {
               eq() {
                 return { async maybeSingle() { return { data: null, error: null }; } };
+              },
+            };
+          },
+        };
+      }
+      if (table === "agent_actions") {
+        return {
+          select() {
+            return {
+              eq() {
+                return {
+                  order() {
+                    return { async limit() { return { data: [], error: null }; } };
+                  },
+                };
               },
             };
           },
