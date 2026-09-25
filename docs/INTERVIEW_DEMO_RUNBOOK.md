@@ -8,7 +8,7 @@
 - Confirm an already analyzed synthetic retention call is available for the backup path.
 - Confirm no call intended for the demo is stuck in `PROCESSING`.
 
-**Readiness note (2026-09-25):** the hosted primary call reached `NEEDS_REVIEW` because Gemini's Files upload returned HTTP 404 before transcription. There is not yet a saved analyzed-call backup. Do not treat the backup path as ready until a synthetic retention call has been successfully processed and its saved transcript and analysis have been checked.
+**Readiness note (2026-09-25):** the original hosted primary call reached `NEEDS_REVIEW` because Gemini's Files upload returned HTTP 404 before transcription. The P4 branch now bypasses that Files hop for the small interview fixture by sending inline audio to the Interactions API, and the post-fix test/lint/build suite passes. The corrected branch has not yet been hosted because the existing Render service tracks `main` and PR previews are disabled. There is still no saved analyzed-call backup. Do not treat the live or backup path as ready until one hosted synthetic retention call completes successfully and its persisted transcript, analysis, proposal, approval/execution, customer mutation, and refresh behavior are checked.
 
 ## Recommended live walkthrough
 
