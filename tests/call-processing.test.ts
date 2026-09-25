@@ -5,9 +5,12 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import request from "supertest";
 import type { CallAnalysis, CallAnalysisRow, CallTranscriptRow } from "../src/shared/calls.js";
 import type { AgentActionRow, DemoCustomer } from "../src/shared/actions.js";
+import type { CallNotificationRow } from "../src/shared/notifications.js";
 import { AiConfigurationError } from "../server/aiTypes.js";
 import type { CallsAiService, CallTranscriptionResult } from "../server/aiTypes.js";
 import { createCallsRouter } from "../server/callsRouter.js";
+import { createHighRiskAlertDispatcher } from "../server/highRiskAlert.js";
+import type { HighRiskAlertDispatcher } from "../server/highRiskAlert.js";
 
 const CALL_ID = "3dd5d1a6-8118-43e4-b340-206825622cff";
 const NOW = "2026-09-25T00:00:00.000Z";
@@ -158,6 +161,7 @@ function createMemorySupabase(options: {
   transcript?: ReturnType<typeof transcriptRow> | null;
   analysis?: ReturnType<typeof analysisRow> | null;
   actions?: AgentActionRow[];
+  notifications?: CallNotificationRow[];
   demoCustomer?: DemoCustomer | null;
   audioError?: Error;
   analysisUpsertError?: Error;
@@ -167,6 +171,7 @@ function createMemorySupabase(options: {
     transcript: options.transcript ?? null,
     analysis: options.analysis ?? null,
     actions: options.actions ?? [],
+    notifications: options.notifications ?? [],
     demoCustomer: options.demoCustomer ?? null,
   };
   const calls = { audioDownloads: 0, signedUrls: 0, transcriptWrites: 0, analysisWrites: 0 };
@@ -178,6 +183,7 @@ function createMemorySupabase(options: {
       private readonly table: string,
       private readonly operation: "select" | "update" | "upsert",
       private readonly values?: Record<string, unknown>,
+      private readonly upsertOptions?: { onConflict?: string; ignoreDuplicates?: boolean },
     ) {}
 
     select() { return this; }
@@ -241,6 +247,37 @@ function createMemorySupabase(options: {
         const found = state.actions.filter((row) => this.matches(row as unknown as Record<string, unknown>));
         return { data: single ? found[0] ?? null : found, error: null };
       }
+      if (this.table === "call_notifications" && this.operation === "select") {
+        const found = state.notifications.filter((row) => this.matches(row as unknown as Record<string, unknown>));
+        return { data: single ? found[0] ?? null : found, error: null };
+      }
+      if (this.table === "call_notifications" && this.operation === "upsert") {
+        const values = this.values ?? {};
+        const existing = state.notifications.find((row) =>
+          row.call_id === values.call_id &&
+          row.notification_type === values.notification_type &&
+          row.recipient === values.recipient,
+        );
+        if (existing && this.upsertOptions?.ignoreDuplicates) return { data: null, error: null };
+        if (existing) return { data: null, error: { message: "Unexpected duplicate notification upsert." } };
+        const row = {
+          id: "90000000-0000-4000-8000-000000000003",
+          created_at: NOW,
+          sent_at: null,
+          provider_message_id: null,
+          error_message: null,
+          attempt_count: 0,
+          ...values,
+        } as unknown as CallNotificationRow;
+        state.notifications.push(row);
+        return { data: { ...row }, error: null };
+      }
+      if (this.table === "call_notifications" && this.operation === "update") {
+        const found = state.notifications.find((row) => this.matches(row as unknown as Record<string, unknown>));
+        if (!found) return { data: null, error: null };
+        Object.assign(found, this.values);
+        return { data: { ...found }, error: null };
+      }
       if (this.table === "demo_customers" && this.operation === "select") {
         const found = this.matches(state.demoCustomer as unknown as Record<string, unknown> | null) ? state.demoCustomer : null;
         return { data: single ? found : found ? [found] : [], error: null };
@@ -277,7 +314,9 @@ function createMemorySupabase(options: {
       return {
         select() { return new Query(table, "select"); },
         update(values: Record<string, unknown>) { return new Query(table, "update", values); },
-        upsert(values: Record<string, unknown>) { return new Query(table, "upsert", values); },
+        upsert(values: Record<string, unknown>, upsertOptions?: { onConflict?: string; ignoreDuplicates?: boolean }) {
+          return new Query(table, "upsert", values, upsertOptions);
+        },
       };
     },
   };
@@ -293,16 +332,19 @@ function createTestApp(
   supabase: SupabaseClient,
   ai: AiDouble,
   logger = { info: () => undefined, warn: () => undefined, error: () => undefined },
+  highRiskAlert?: HighRiskAlertDispatcher,
 ) {
   const app = express();
+  const dependencies = {
+    supabase,
+    bucketName: "call-recordings",
+    ai,
+    logger,
+    ...(highRiskAlert ? { highRiskAlert } : {}),
+  } as Parameters<typeof createCallsRouter>[0];
   app.use(
     "/api/calls",
-    createCallsRouter({
-      supabase,
-      bucketName: "call-recordings",
-      ai,
-      logger,
-    }),
+    createCallsRouter(dependencies),
   );
   return app;
 }
@@ -342,6 +384,78 @@ test("an explicit process request persists transcript and validated call intelli
   assert.equal(memory.calls.transcriptWrites, 1);
   assert.equal(memory.calls.analysisWrites, 1);
   assert.deepEqual(ai.calls, { transcribe: 1, analyze: 1 });
+});
+
+test("high-risk notification failure does not turn persisted analysis into a failed call", async () => {
+  const memory = createMemorySupabase();
+  const ai = createAiDouble();
+  let dispatchCount = 0;
+  let observedPersistedAnalysis = false;
+  const highRiskAlert: HighRiskAlertDispatcher = {
+    async dispatch(input) {
+      dispatchCount += 1;
+      observedPersistedAnalysis = memory.state.analysis?.analysis_json.priority === input.analysis.priority;
+      assert.equal(memory.state.call.status, "PROCESSING");
+      throw new Error("notification storage unavailable");
+    },
+  };
+
+  const response = await request(createTestApp(memory.supabase, ai.ai, undefined, highRiskAlert))
+    .post(`/api/calls/${CALL_ID}/process`);
+
+  assert.equal(dispatchCount, 1);
+  assert.equal(observedPersistedAnalysis, true);
+  assert.equal(response.status, 200, JSON.stringify(response.body));
+  assert.equal(response.body.call.status, "ANALYZED");
+  assert.equal(response.body.analysis.analysis_json.priority, "HIGH");
+  assert.equal(response.body.actionPolicyState, "ACTION_AVAILABLE");
+});
+
+test("a persisted Brevo rejection leaves the call ANALYZED and keeps the deterministic proposal available", async () => {
+  const memory = createMemorySupabase();
+  const ai = createAiDouble();
+  const highRiskAlert = createHighRiskAlertDispatcher({
+    supabase: memory.supabase,
+    recipientConfig: "manager@example.com",
+    sender: {
+      async send() {
+        return { status: "FAILED", providerMessageId: null, errorMessage: "Brevo returned HTTP 503." };
+      },
+    },
+    logger: { error: () => undefined },
+  });
+
+  const response = await request(createTestApp(memory.supabase, ai.ai, undefined, highRiskAlert))
+    .post(`/api/calls/${CALL_ID}/process`);
+
+  assert.equal(response.status, 200, JSON.stringify(response.body));
+  assert.equal(response.body.call.status, "ANALYZED");
+  assert.equal(response.body.analysis.analysis_json.priority, "HIGH");
+  assert.equal(response.body.actionPolicyState, "ACTION_AVAILABLE");
+  assert.equal(response.body.notifications[0].status, "FAILED");
+  assert.equal(response.body.notifications[0].attempt_count, 1);
+  assert.equal(Object.hasOwn(response.body.notifications[0], "recipient"), false);
+  assert.equal(memory.state.notifications[0]?.recipient, "manager@example.com");
+});
+
+test("repeated Process requests for an already analyzed call do not backfill a new alert", async () => {
+  const memory = createMemorySupabase({
+    call: fakeCall({ status: "ANALYZED" }),
+    transcript: transcriptRow(transcript()),
+    analysis: analysisRow(analysis()),
+  });
+  const ai = createAiDouble();
+  let dispatchCount = 0;
+  const highRiskAlert: HighRiskAlertDispatcher = {
+    async dispatch() { dispatchCount += 1; },
+  };
+
+  const response = await request(createTestApp(memory.supabase, ai.ai, undefined, highRiskAlert))
+    .post(`/api/calls/${CALL_ID}/process`);
+
+  assert.equal(response.status, 200);
+  assert.equal(dispatchCount, 0);
+  assert.deepEqual(ai.calls, { transcribe: 0, analyze: 0 });
 });
 
 test("a valid analyzed call returns persisted results without another AI request", async () => {
@@ -537,6 +651,40 @@ test("call detail returns persisted transcript and analysis", async () => {
   assert.equal(response.body.analysis.analysis_json.priority, "HIGH");
   assert.equal(ai.calls.transcribe, 0);
   assert.equal(ai.calls.analyze, 0);
+});
+
+test("call detail omits configured email addresses from public notification summaries", async () => {
+  const memory = createMemorySupabase({
+    call: fakeCall({ status: "ANALYZED" }),
+    transcript: transcriptRow(transcript()),
+    analysis: analysisRow(analysis()),
+    notifications: [{
+      id: "91000000-0000-4000-8000-000000000003",
+      call_id: CALL_ID,
+      notification_type: "HIGH_RISK_ALERT",
+      recipient: "manager@example.com",
+      provider: "BREVO",
+      status: "SENT",
+      provider_message_id: "<provider-message>",
+      attempt_count: 1,
+      error_message: null,
+      created_at: NOW,
+      sent_at: NOW,
+    }],
+  });
+  const ai = createAiDouble();
+  const highRiskAlert: HighRiskAlertDispatcher = {
+    hasConfiguredRecipients: true,
+    async dispatch() { throw new Error("GET call detail must not dispatch alerts."); },
+  };
+
+  const response = await request(createTestApp(memory.supabase, ai.ai, undefined, highRiskAlert)).get(`/api/calls/${CALL_ID}`);
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.notifications[0].status, "SENT");
+  assert.equal(response.body.highRiskAlertConfigured, true);
+  assert.equal(Object.hasOwn(response.body.notifications[0], "recipient"), false);
+  assert.doesNotMatch(response.text, /manager@example.com/);
 });
 
 test("private audio redirects to a short-lived URL without exposing server credentials", async () => {

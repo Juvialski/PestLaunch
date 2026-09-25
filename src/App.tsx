@@ -11,6 +11,7 @@ import { buildCallTimeline } from "./shared/actionTimeline.js";
 import { AUDIO_PLAYBACK_ERROR, visibleCallError } from "./shared/callErrorFeedback.js";
 import { MAX_AUDIO_UPLOAD_BYTES } from "./shared/calls.js";
 import { buildSourceTranscriptDisplay, formatSourceSpeaker } from "./shared/sourceTranscript.js";
+import { notificationPresentationState, type CallNotificationSummary } from "./shared/notifications.js";
 
 const ACCEPTED_EXTENSIONS = new Set(["mp3", "wav", "m4a", "webm"]);
 const ACCEPTED_FORMATS = "audio/mpeg,audio/wav,audio/x-wav,audio/mp4,audio/x-m4a,audio/webm,.mp3,.wav,.m4a,.webm";
@@ -26,6 +27,8 @@ type CallDetailPayload = {
   analysis: CallAnalysisRow | null;
   demoCustomer: DemoCustomer | null;
   actions: AgentActionRow[];
+  notifications: CallNotificationSummary[];
+  highRiskAlertConfigured: boolean;
   actionPolicyState: CallActionPolicyState;
 };
 type ApiPayload = {
@@ -36,6 +39,8 @@ type ApiPayload = {
   analysis?: CallAnalysisRow | null;
   demoCustomer?: DemoCustomer | null;
   actions?: AgentActionRow[];
+  notifications?: CallNotificationSummary[];
+  highRiskAlertConfigured?: boolean;
   actionPolicyState?: CallActionPolicyState;
   action?: AgentActionRow | null;
   reason?: string;
@@ -63,6 +68,8 @@ async function fetchCallDetail(callId: string): Promise<CallDetailPayload> {
     analysis: payload.analysis ?? null,
     demoCustomer: payload.demoCustomer ?? null,
     actions: payload.actions ?? [],
+    notifications: payload.notifications ?? [],
+    highRiskAlertConfigured: payload.highRiskAlertConfigured ?? false,
     actionPolicyState: payload.actionPolicyState ?? "NOT_READY",
   };
 }
@@ -240,6 +247,8 @@ export default function App() {
           analysis: payload.analysis ?? null,
           demoCustomer: payload.demoCustomer ?? null,
           actions: payload.actions ?? [],
+          notifications: payload.notifications ?? [],
+          highRiskAlertConfigured: payload.highRiskAlertConfigured ?? false,
           actionPolicyState: payload.actionPolicyState ?? "NOT_READY",
         });
       }
@@ -682,7 +691,7 @@ function CallDetailWorkspace({
   onPropose: () => void;
   onDecision: (actionId: string, decision: "approve" | "reject") => void;
 }) {
-  const { call, transcript, analysis, demoCustomer, actions, actionPolicyState } = detail;
+  const { call, transcript, analysis, demoCustomer, actions, notifications, highRiskAlertConfigured, actionPolicyState } = detail;
   const callDisplayName = call.caller_name?.trim() || demoCustomer?.name || "Unassigned call";
   const [audioPlaybackFailedCallId, setAudioPlaybackFailedCallId] = useState<string | null>(null);
   const visibleError = visibleCallError(processError, call.last_error);
@@ -691,6 +700,9 @@ function CallDetailWorkspace({
   const isBusy = call.status === "PROCESSING" || processState === "processing";
   const isActionBusy = actionRequestState !== "idle";
   const timeline = buildCallTimeline(detail);
+  const alertPresentation = intelligence && (intelligence.priority === "HIGH" || intelligence.priority === "URGENT")
+    ? notificationPresentationState(notifications, highRiskAlertConfigured)
+    : null;
   const signals = intelligence
     ? [
         ["newLead", "New lead"],
@@ -775,6 +787,13 @@ function CallDetailWorkspace({
               </div>
               {transcript && <a className="compare-source-link" href="#source-transcript">Compare with source transcript</a>}
             </div>
+
+            {alertPresentation && (
+              <div className={`high-risk-alert-status alert-${alertPresentation.toLowerCase().replaceAll("_", "-")}`} role="status">
+                <span>High-risk escalation</span>
+                <strong>{formatHighRiskAlertState(alertPresentation)}</strong>
+              </div>
+            )}
 
             {canProcess && (
               <button className="primary-button process-button" type="button" onClick={onProcess} disabled={isBusy}>
@@ -971,6 +990,17 @@ function describeActionEffect(action: AgentActionRow): string {
     return "If approved, the linked synthetic termite lead may move from NEW to QUALIFIED.";
   }
   return "If approved, this completed action record represents the created follow-up task; no customer fields are changed.";
+}
+
+function formatHighRiskAlertState(state: NonNullable<ReturnType<typeof notificationPresentationState>>): string {
+  switch (state) {
+    case "NOT_CONFIGURED": return "Not configured";
+    case "NOT_SENT": return "No alert recorded";
+    case "PENDING": return "Sending to configured contacts";
+    case "SENT": return "Sent to configured contacts";
+    case "FAILED": return "Email delivery failed";
+    case "PARTIAL": return "Some email deliveries failed";
+  }
 }
 
 function formatDuration(seconds: number): string {

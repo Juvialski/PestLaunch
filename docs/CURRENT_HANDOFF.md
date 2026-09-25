@@ -716,3 +716,32 @@ After the merge, `AGENTS.md` was also updated to prefer one bounded real local p
 - Gemini calls: 0. Database migration: none. `supabase db push`: not run. Jev: not integrated.
 - Local in-app browser rendering at approximately 1290×910 showed the source/AI columns without horizontal overflow. The browser exposes no viewport override, so exact 1440×900, 1366×768, and mobile screenshot checks could not be performed; the responsive stack is configured below 1080px.
 - `npm test` — 58 passed, 0 failed. `npm run lint` — passed. `npm run build` — passed, including type checks and Vite production build.
+
+## 22. ALERT-R1 — Automatic high-risk email escalation via Brevo — 2026-09-25
+
+### Scope and behavior
+
+- Starting `origin/main`: `a786a65b1d0029fcc2b7dbcc48dc77b094a196db` (UI-R4). Work is isolated on `codex/alert-r1-brevo`.
+- The synchronous Process-call path dispatches an internal alert only after the transcript is persisted, analysis is schema-validated and evidence-grounded, and the analysis row is saved. A deterministic application rule sends only for `HIGH` or `URGENT`; Gemini does not call Brevo.
+- `server/brevoService.ts` sends transactional email using server-side `fetch` to Brevo `/v3/smtp/email`, with a bounded request timeout and no automatic/background retry. Each normalized configured recipient is sent separately.
+- Recipients come only from `HIGH_RISK_ALERT_RECIPIENTS`; entries are trimmed, lowercased, deduplicated, and invalid addresses are skipped. There is no public recipient field. Call-detail responses omit recipient addresses.
+- The email contains the caller/customer name, classification, priority, sentiment, summary, risk signals, up to three evidence quotes, the deterministic recommended action if applicable, approval status, call ID, and app link. It omits the full transcript and does not claim the action executed.
+- One `call_notifications` row per `(call_id, notification_type, recipient)` is the send claim. Existing rows suppress later sends for that recipient, including repeat/recovery Process requests. Provider failures are persisted as `FAILED`; they do not change an otherwise successful call from `ANALYZED` or block the action proposal. Repeated Process requests for already-ANALYZED calls do not backfill or resend alerts.
+- Notification presentation is limited to HIGH/URGENT findings. It distinguishes sent, partial, pending, failed, not configured, and historical analyzed calls with no alert record. The existing UI-R4 source transcript and human-approved action structure remain intact. Timeline alert events are separate from action proposal/approval/execution events.
+- The deterministic action policy, action API, approval checks, and synthetic customer mutation semantics are unchanged. Jev is not integrated.
+
+### Persistence and hosted state
+
+- Migration file: `supabase/migrations/20260925130430_call_notifications.sql`.
+- The migration was applied to the hosted Supabase project through the Supabase connector and appears in hosted migration history as `20260925130430_call_notifications`. The table has RLS enabled, no `anon`/`authenticated` privileges, and `service_role` has only `SELECT`, `INSERT`, and `UPDATE` access. Privilege verification returned service-role access enabled and anon/authenticated select disabled.
+- The unique key is `(call_id, notification_type, recipient)` with `notification_type = HIGH_RISK_ALERT`. Allowed statuses are `PENDING`, `SENT`, and `FAILED`; provider IDs, attempt count, safe errors, creation time, and send time are retained.
+
+### Verification and remaining provider check
+
+- Focused mocked verification: Brevo service 7/7, notification/presentation/timeline 10/10, and processing/action/ingestion integration 41/41 passed.
+- `npm test` — 76 passed, 0 failed. `npm run lint` — passed. `npm run build` — passed, including app/server/test type checks, server compilation, and the Vite production build. After a small lint-only sanitization rewrite, the focused Brevo service tests were rerun and passed 7/7.
+- A local Brevo sandbox-mode request using `.env.txt` returned HTTP 401. The configured local sender and one recipient parse correctly; the local API key was rejected. No real email was sent. Recheck the server-side Brevo key in local configuration and Render before the live email step; do not paste it into chat.
+- The Codex in-app browser inspected the saved high-risk backup `53d0f8b5-e520-42fb-9c0a-a64fa1212cdd` read-only. It showed the source transcript, HIGH complaint/cancellation findings, evidence, completed retention action, and “No alert recorded”; it was not reprocessed or mutated.
+- The saved LOW booking call `21621eaa-0215-4d5f-88c6-c79977e4fd3b` showed BOOKING/LOW, the existing no-follow-up result, and no alert UI. A read-only database query found zero notification rows for both existing regression calls.
+- No fresh retention recording was processed because the sandbox rejected the configured key. Render has the variables per user confirmation, but the new branch is not deployed; the app’s regular main deployment was not changed.
+- Required Render/local server variables: `BREVO_API_KEY`, `BREVO_SENDER_EMAIL`, `BREVO_SENDER_NAME`, and `HIGH_RISK_ALERT_RECIPIENTS`. Use only verified internal recipients in server configuration.
