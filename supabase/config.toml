@@ -1,0 +1,26 @@
+project_id = "pestlaunch"
+
+[api]
+enabled = true
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+major_version = 17
+
+[db.migrations]
+enabled = true
+
+[db.seed]
+enabled = false
+
+[storage]
+enabled = true
+file_size_limit = "25MiB"
+
+[storage.buckets.call-recordings]
+public = false
+file_size_limit = "25MiB"
+allowed_mime_types = ["audio/mpeg", "audio/wav", "audio/mp4", "audio/webm"]
