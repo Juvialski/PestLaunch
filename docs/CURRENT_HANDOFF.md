@@ -746,3 +746,35 @@ After the merge, `AGENTS.md` was also updated to prefer one bounded real local p
 - The saved high-risk backup `53d0f8b5-e520-42fb-9c0a-a64fa1212cdd` remains read-only historical evidence and should not be reprocessed. The saved LOW booking call `21621eaa-0215-4d5f-88c6-c79977e4fd3b` remains the no-alert regression case.
 - Required Render/local server variables: `BREVO_API_KEY`, `BREVO_SENDER_EMAIL`, `BREVO_SENDER_NAME`, and `HIGH_RISK_ALERT_RECIPIENTS`. Use only verified internal recipients in server configuration.
 - Temporary GitHub Actions smoke workflows were used only for deployed verification. Their historical red runs were test-harness failures (401 before the Brevo security change, then an overbroad `@` assertion); a final read-only production verification passed without sending another email.
+
+## 23. FINAL-R1 — Automatic processing and interview readiness — 2026-09-25
+
+### Starting point and behavior
+
+- Starting `origin/main`: `756f8b54643a25d1b6b8784ced6cb1217858a7ea` (ALERT-R1). Implementation branch: `codex/final-r1-automatic-processing`.
+- A successful upload selects the returned call and starts the existing `POST /api/calls/:id/process` once. The upload endpoint remains a persistence boundary; Gemini processing is not moved into multipart ingestion.
+- Processing requests are coordinated per call. Reopening an analyzed call does not process it; historical `UPLOADED` calls are not auto-processed on page load. Manual processing/retry remains for `UPLOADED`, `FAILED`, and `NEEDS_REVIEW` recovery. A fresh-upload or explicit recovery request continues the deterministic proposal/no-action step even if the user changes the selected call while processing.
+- The shared progress UI maps persisted call, transcript, analysis, and action-policy state to stage labels. `UPLOADED` shows the saved recording while processing starts; `PROCESSING` without a transcript shows transcription; `TRANSCRIBED` shows analysis; saved analysis with unresolved workflow shows workflow rules; resolved action/no-action state becomes a compact Ready for review message. FAILED and NEEDS_REVIEW show that the recording is saved and expose retry where the existing endpoint permits it.
+- While processing is pending, the browser performs sequential read-only `GET /api/calls/:id` polls at 1.5-second intervals, bounded to 120 attempts. Polls carry the selected-call generation so a stale request cannot cancel a newer view. Polling stops at terminal status, on call selection/unmount, or after the bound. A transient/timeout notice offers a read-only Refresh status action, and FAILED/NEEDS_REVIEW identifies the stage needing attention. Polling never invokes Gemini, sends email, proposes an action, or executes one.
+- Recent-call list refreshes are request-ordered so an earlier response cannot overwrite a newer processing status.
+
+### Call-detail presentation
+
+- Source Transcript and AI findings/evidence remain side by side. Recommended response now starts on a full-width row after that comparison; pending approval, completed result, and no-action states use the same section.
+- Pending actions keep Approve follow-up primary and Reject secondary. Completed history distinguishes recorded outcome from current customer status. LOW/no-action calls show No follow-up action required without approval controls or high-risk alert treatment.
+- Activity is a connected vertical chronology with event names, optional detail, and secondary timestamps. Mobile keeps the same vertical order without horizontal timeline scrolling.
+- Deterministic action policy, action types, approval, customer mutations, action idempotency, and ALERT-R1 notification idempotency are unchanged. No migration, `supabase db push`, provider, or queue/worker changes were made. Jev is not integrated.
+
+### Browser and hosted-call verification
+
+- Hosted fixtures were selected and inspected read-only: completed retention `53d0f8b5-e520-42fb-9c0a-a64fa1212cdd`, LOW booking `21621eaa-0215-4d5f-88c6-c79977e4fd3b`, and SENT Brevo alert `2c9eb855-22f5-467a-a971-3388d2ffeae8`. No fixture was reprocessed, approved, or resent.
+- The hosted SENT-alert call currently has no saved action proposal. The pending-action layout and active progress stages were therefore inspected against local in-memory mock responses; the mock server was removed afterward. No production or provider requests were made for visual QA.
+- Local browser layout checks: 1440×900, 1366×768, 1280×800, and 390×844. Document widths stayed within each viewport; recommendation and timeline begin below the source/AI comparison, and mobile stacks both sections.
+
+### Validation
+
+- `npm test` — 95 passed, 0 failed.
+- `npm run lint` — passed.
+- `npm run build` — passed, including app/server/test type checks and Vite production build.
+- Gemini calls: 0. Brevo sends: 0. Database migration: none. Jev: not integrated.
+- Prototype limitation remains: processing is synchronous on the existing server. If the server stops during a run, a call can remain `PROCESSING`; this phase adds bounded read-only polling but no background worker or stale-lock recovery policy.

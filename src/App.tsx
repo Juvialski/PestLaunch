@@ -12,6 +12,15 @@ import { AUDIO_PLAYBACK_ERROR, visibleCallError } from "./shared/callErrorFeedba
 import { MAX_AUDIO_UPLOAD_BYTES } from "./shared/calls.js";
 import { buildSourceTranscriptDisplay, formatSourceSpeaker } from "./shared/sourceTranscript.js";
 import { notificationPresentationState, type CallNotificationSummary } from "./shared/notifications.js";
+import { CallProcessingProgress } from "./components/CallProcessingProgress.js";
+import {
+  CallProcessingCoordinator,
+  mapCallProcessingProgress,
+  pollCallUntilTerminal,
+  shouldAwaitProcessingPoll,
+  shouldProposeAfterProcessing,
+  type ProcessTrigger,
+} from "./shared/callProcessingLifecycle.js";
 
 const ACCEPTED_EXTENSIONS = new Set(["mp3", "wav", "m4a", "webm"]);
 const ACCEPTED_FORMATS = "audio/mpeg,audio/wav,audio/x-wav,audio/mp4,audio/x-m4a,audio/webm,.mp3,.wav,.m4a,.webm";
@@ -56,8 +65,8 @@ async function fetchRecentCalls(): Promise<CallSummary[]> {
   return payload.calls ?? [];
 }
 
-async function fetchCallDetail(callId: string): Promise<CallDetailPayload> {
-  const response = await fetch(`/api/calls/${callId}`);
+async function fetchCallDetail(callId: string, signal?: AbortSignal): Promise<CallDetailPayload> {
+  const response = await fetch(`/api/calls/${callId}`, { signal });
   const payload = (await response.json()) as ApiPayload;
   if (!response.ok || !payload.call) {
     throw new Error(payload.error?.message ?? "Call details could not be loaded.");
@@ -100,26 +109,47 @@ export default function App() {
   const [uploadMessage, setUploadMessage] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [selectedCallId, setSelectedCallId] = useState<string | null>(null);
+  const [selectionGeneration, setSelectionGeneration] = useState(0);
   const [callDetail, setCallDetail] = useState<CallDetailPayload | null>(null);
   const [detailState, setDetailState] = useState<DetailState>("idle");
   const [detailError, setDetailError] = useState<string | null>(null);
   const [processState, setProcessState] = useState<ProcessState>("idle");
   const [processError, setProcessError] = useState<string | null>(null);
+  const [pollingStatusMessage, setPollingStatusMessage] = useState<string | null>(null);
   const [actionRequestState, setActionRequestState] = useState<ActionRequestState>("idle");
   const [actionRequestError, setActionRequestError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const detailRequestRef = useRef(0);
+  const callsRequestRef = useRef(0);
   const selectedCallIdRef = useRef<string | null>(null);
+  const selectionGenerationRef = useRef(0);
+  const processCoordinatorRef = useRef(new CallProcessingCoordinator());
+  const actionRequestInFlightRef = useRef(false);
+  const processingPollRef = useRef<{
+    callId: string;
+    selectionGeneration: number;
+    controller: AbortController;
+    completion: Promise<unknown>;
+  } | null>(null);
   const selectedDemoCustomer = demoCustomers.find((customer) => customer.id === selectedDemoCustomerId) ?? null;
 
+  const advanceSelectionGeneration = () => {
+    const nextGeneration = selectionGenerationRef.current + 1;
+    selectionGenerationRef.current = nextGeneration;
+    setSelectionGeneration(nextGeneration);
+  };
+
   const loadCalls = useCallback(async () => {
+    const requestId = ++callsRequestRef.current;
     setCallsState("loading");
     setCallsError(null);
     try {
       const nextCalls = await fetchRecentCalls();
+      if (requestId !== callsRequestRef.current) return;
       setCalls(nextCalls);
       setCallsState("ready");
     } catch (error) {
+      if (requestId !== callsRequestRef.current) return;
       setCallsError(error instanceof Error ? error.message : "Recent calls could not be loaded.");
       setCallsState("error");
     }
@@ -172,30 +202,55 @@ export default function App() {
     callId: string | null,
     state: Exclude<ActionRequestState, "idle">,
     url: string,
-  ) => {
-    if (actionRequestState !== "idle") return;
-    setActionRequestState(state);
-    setActionRequestError(null);
+    updateUi = true,
+  ): Promise<boolean> => {
+    const shouldUpdateUi = updateUi && !actionRequestInFlightRef.current && (!callId || selectedCallIdRef.current === callId);
+    if (updateUi && !shouldUpdateUi) return false;
+    if (shouldUpdateUi) {
+      actionRequestInFlightRef.current = true;
+      setActionRequestState(state);
+      setActionRequestError(null);
+    }
     let noActionRequired = false;
+    let succeeded = false;
     try {
       const response = await fetch(url, { method: "POST" });
       const payload = (await response.json()) as ApiPayload;
       if (!response.ok) throw new Error(payload.error?.message ?? "The action request could not be completed.");
+      succeeded = true;
       if (payload.reason === "NO_PERMITTED_ACTION") {
         const hasSavedAction = Boolean(callId && callDetail?.call.id === callId && callDetail.actions.length > 0);
         if (!hasSavedAction) noActionRequired = true;
         if (!hasSavedAction && callId && selectedCallIdRef.current === callId) {
           setCallDetail((current) => current?.call.id === callId
             ? { ...current, actionPolicyState: "NO_ACTION_REQUIRED" }
-            : current);
+          : current);
         }
       }
     } catch (error) {
-      setActionRequestError(error instanceof Error ? error.message : "The action request could not be completed.");
+      if (shouldUpdateUi && (!callId || selectedCallIdRef.current === callId)) {
+        setActionRequestError(error instanceof Error ? error.message : "The action request could not be completed.");
+      }
     } finally {
       if (!noActionRequired && callId && selectedCallIdRef.current === callId) await loadCallDetail(callId);
-      setActionRequestState("idle");
+      if (shouldUpdateUi) {
+        actionRequestInFlightRef.current = false;
+        setActionRequestState("idle");
+      }
     }
+    if (
+      succeeded &&
+      shouldUpdateUi &&
+      state === "proposing" &&
+      callId &&
+      selectedCallIdRef.current === callId &&
+      processState === "error" &&
+      callDetail?.call.status === "ANALYZED"
+    ) {
+      setProcessError(null);
+      setProcessState("success");
+    }
+    return succeeded;
   };
 
   const handleDemoReset = async () => {
@@ -218,72 +273,180 @@ export default function App() {
   };
 
   const selectCall = (callId: string) => {
+    advanceSelectionGeneration();
     selectedCallIdRef.current = callId;
     setSelectedCallId(callId);
     setCallDetail(null);
     setProcessState("idle");
     setProcessError(null);
+    setPollingStatusMessage(null);
     setActionRequestError(null);
     void loadCallDetail(callId);
   };
 
-  const handleProcessCall = async () => {
-    if (!callDetail || processState === "processing" || callDetail.call.status === "PROCESSING") return;
-    const callId = callDetail.call.id;
-    setProcessState("processing");
-    setProcessError(null);
-    setCallDetail((current) =>
-      current ? { ...current, call: { ...current.call, status: "PROCESSING" } } : current,
-    );
-    setCalls((current) => current.map((call) => (call.id === callId ? { ...call, status: "PROCESSING" } : call)));
+  const settleProcessingPoll = async (callId: string, selectionGeneration: number) => {
+    const activePoll = processingPollRef.current;
+    if (!activePoll || activePoll.callId !== callId) return;
+    if (!shouldAwaitProcessingPoll(activePoll, callId, selectionGeneration)) return;
+    activePoll.controller.abort();
+    await activePoll.completion;
+    if (processingPollRef.current === activePoll) processingPollRef.current = null;
+  };
 
-    try {
-      const response = await fetch(`/api/calls/${callId}/process`, { method: "POST" });
-      const payload = (await response.json()) as ApiPayload;
-      if (payload.call && selectedCallIdRef.current === callId) {
-        setCallDetail({
-          call: payload.call,
-          transcript: payload.transcript ?? null,
-          analysis: payload.analysis ?? null,
-          demoCustomer: payload.demoCustomer ?? null,
-          actions: payload.actions ?? [],
-          notifications: payload.notifications ?? [],
-          highRiskAlertConfigured: payload.highRiskAlertConfigured ?? false,
-          actionPolicyState: payload.actionPolicyState ?? "NOT_READY",
-        });
-      }
-      if (!response.ok) {
-        throw new Error(payload.error?.message ?? "Call processing could not be completed.");
-      }
-      if (selectedCallIdRef.current === callId) setProcessState("success");
-      if (payload.analysis && selectedCallIdRef.current === callId) {
-        await runActionRequest(callId, "proposing", `/api/calls/${callId}/actions/propose`);
-      }
-    } catch (error) {
+  const handleProcessCall = async (sourceCall: CallRecord, trigger: ProcessTrigger) => {
+    const attemptSelectionGeneration = selectionGenerationRef.current;
+    await processCoordinatorRef.current.run(sourceCall, trigger, async (callId) => {
       if (selectedCallIdRef.current === callId) {
-        setProcessState("error");
-        setProcessError(error instanceof Error ? error.message : "Call processing could not be completed.");
+        setProcessState("processing");
+        setProcessError(null);
+        setPollingStatusMessage(null);
+        setCallDetail((current) => current?.call.id === callId
+          ? { ...current, call: { ...current.call, status: "PROCESSING" } }
+          : current);
       }
-    } finally {
-      if (selectedCallIdRef.current === callId) {
-        await loadCallDetail(callId);
+      setCalls((current) => current.map((call) => (call.id === callId ? { ...call, status: "PROCESSING" } : call)));
+
+      let receivedDetail = false;
+      let responseIsTerminal = false;
+      try {
+        const response = await fetch(`/api/calls/${callId}/process`, { method: "POST" });
+        const payload = (await response.json()) as ApiPayload;
+        responseIsTerminal = payload.call !== undefined && ["ANALYZED", "FAILED", "NEEDS_REVIEW"].includes(payload.call.status);
+        if (responseIsTerminal) await settleProcessingPoll(callId, attemptSelectionGeneration);
+        if (payload.call && selectedCallIdRef.current === callId) {
+          receivedDetail = true;
+          setCallDetail({
+            call: payload.call,
+            transcript: payload.transcript ?? null,
+            analysis: payload.analysis ?? null,
+            demoCustomer: payload.demoCustomer ?? null,
+            actions: payload.actions ?? [],
+            notifications: payload.notifications ?? [],
+            highRiskAlertConfigured: payload.highRiskAlertConfigured ?? false,
+            actionPolicyState: payload.actionPolicyState ?? "NOT_READY",
+          });
+          setCalls((current) => current.map((call) => call.id === callId
+            ? { ...call, status: payload.call!.status, updated_at: payload.call!.updated_at }
+            : call));
+        }
+        if (!response.ok) {
+          throw new Error(payload.error?.message ?? "Call processing could not be completed.");
+        }
+
+        const isSelected = selectedCallIdRef.current === callId;
+        if (payload.analysis && shouldProposeAfterProcessing(trigger)) {
+          const presentProposalProgress = isSelected && !actionRequestInFlightRef.current;
+          const proposalStarted = await runActionRequest(
+            callId,
+            "proposing",
+            `/api/calls/${callId}/actions/propose`,
+            presentProposalProgress,
+          );
+          if (!proposalStarted && isSelected) {
+            setProcessState("error");
+            setProcessError("The call analysis is saved, but its workflow outcome needs attention.");
+            return;
+          }
+        }
+        if (selectedCallIdRef.current === callId) setProcessState("success");
+      } catch (error) {
+        if (selectedCallIdRef.current === callId) {
+          setProcessState("error");
+          setProcessError(error instanceof Error ? error.message : "Call processing could not be completed.");
+        }
+      } finally {
+        if (responseIsTerminal) await settleProcessingPoll(callId, attemptSelectionGeneration);
+        const hasCallPoll = processingPollRef.current?.callId === callId;
+        if (selectedCallIdRef.current === callId && !receivedDetail && !hasCallPoll) {
+          try {
+            const refreshedDetail = await fetchCallDetail(callId);
+            if (selectedCallIdRef.current === callId) setCallDetail(refreshedDetail);
+          } catch {
+            // Keep the saved recording visible with its processing error when detail refresh is unavailable.
+          }
+        }
+        await loadCalls();
       }
-      await loadCalls();
-    }
+    });
+  };
+
+  const pollingCallId = detailState === "ready" && selectedCallId &&
+    callDetail?.call.id === selectedCallId &&
+    (processState === "processing" || callDetail.call.status === "PROCESSING")
+    ? selectedCallId
+    : null;
+
+  useEffect(() => {
+    if (!pollingCallId) return;
+    const controller = new AbortController();
+    const completion = pollCallUntilTerminal({
+      callId: pollingCallId,
+      readCall: fetchCallDetail,
+      intervalMs: 1500,
+      maxAttempts: 120,
+      signal: controller.signal,
+      onUpdate: (nextDetail) => {
+        if (selectedCallIdRef.current !== pollingCallId || selectionGenerationRef.current !== selectionGeneration) return;
+        setPollingStatusMessage(null);
+        if (
+          nextDetail.call.status === "ANALYZED" &&
+          processState === "error" &&
+          nextDetail.actionPolicyState !== "ACTION_AVAILABLE" &&
+          nextDetail.actionPolicyState !== "NOT_READY"
+        ) {
+          setProcessError(null);
+          setProcessState("success");
+        }
+        setCallDetail(nextDetail);
+        setCalls((current) => current.map((call) => call.id === pollingCallId
+          ? { ...call, status: nextDetail.call.status, updated_at: nextDetail.call.updated_at }
+          : call));
+      },
+      onError: () => {
+        if (selectedCallIdRef.current === pollingCallId && selectionGenerationRef.current === selectionGeneration) {
+          setPollingStatusMessage("A progress refresh failed. The saved call is still being checked.");
+        }
+      },
+    });
+    const activePoll = { callId: pollingCallId, selectionGeneration, controller, completion };
+    processingPollRef.current = activePoll;
+    void completion.then((result) => {
+      if (
+        result.reason === "limit" &&
+        selectedCallIdRef.current === pollingCallId &&
+        selectionGenerationRef.current === selectionGeneration &&
+        !controller.signal.aborted
+      ) {
+        setPollingStatusMessage("Progress updates paused after three minutes. Refresh status to check again.");
+      }
+    });
+    return () => {
+      controller.abort();
+      void completion.finally(() => {
+        if (processingPollRef.current === activePoll) processingPollRef.current = null;
+      });
+    };
+  }, [pollingCallId, selectionGeneration, processState]);
+
+  const refreshCallStatus = async (callId: string) => {
+    setPollingStatusMessage(null);
+    await settleProcessingPoll(callId, selectionGenerationRef.current);
+    if (selectedCallIdRef.current === callId) await loadCallDetail(callId);
   };
 
   useEffect(() => {
     let active = true;
+    const initialCallsRequestId = ++callsRequestRef.current;
     void fetchRecentCalls()
       .then((nextCalls) => {
-        if (!active) {
+        if (!active || initialCallsRequestId !== callsRequestRef.current) {
           return;
         }
         setCalls(nextCalls);
         setCallsState("ready");
       })
       .catch((error: unknown) => {
-        if (!active) {
+        if (!active || initialCallsRequestId !== callsRequestRef.current) {
           return;
         }
         setCallsError(error instanceof Error ? error.message : "Recent calls could not be loaded.");
@@ -366,16 +529,40 @@ export default function App() {
       if (!response.ok) {
         throw new Error(payload.error?.message ?? "The audio could not be uploaded.");
       }
+      if (!payload.call) {
+        throw new Error("The recording was uploaded, but its call details could not be loaded.");
+      }
 
       const uploadedName = selectedFile.name;
+      const uploadedCall = payload.call;
       setSelectedFile(null);
       setCallerName("");
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
+      advanceSelectionGeneration();
+      selectedCallIdRef.current = uploadedCall.id;
+      setSelectedCallId(uploadedCall.id);
+      setCallDetail({
+        call: uploadedCall,
+        transcript: null,
+        analysis: null,
+        demoCustomer: selectedDemoCustomer,
+        actions: [],
+        notifications: [],
+        highRiskAlertConfigured: false,
+        actionPolicyState: "NOT_READY",
+      });
+      setDetailState("ready");
+      setDetailError(null);
+      setProcessState("idle");
+      setProcessError(null);
+      setPollingStatusMessage(null);
+      setIsUploadOpen(false);
       setUploadState("success");
-      setUploadMessage(`${uploadedName} was added to recent calls.`);
-      await loadCalls();
+      setUploadMessage(`${uploadedName} was added. Processing started automatically.`);
+      void loadCalls();
+      void handleProcessCall(uploadedCall, "fresh-upload");
     } catch (error) {
       setUploadState("error");
       setUploadMessage(error instanceof Error ? error.message : "The audio could not be uploaded.");
@@ -653,9 +840,11 @@ export default function App() {
                   detail={callDetail}
                   processState={processState}
                   processError={processError}
+                  progressNotice={pollingStatusMessage}
                   actionRequestState={actionRequestState}
                   actionRequestError={actionRequestError}
-                  onProcess={() => void handleProcessCall()}
+                  onProcess={(currentCall) => void handleProcessCall(currentCall, "manual-recovery")}
+                  onRefreshStatus={() => void refreshCallStatus(callDetail.call.id)}
                   onPropose={() => void runActionRequest(callDetail.call.id, "proposing", `/api/calls/${callDetail.call.id}/actions/propose`)}
                   onDecision={(actionId, decision) => void runActionRequest(
                     callDetail.call.id,
@@ -676,18 +865,22 @@ function CallDetailWorkspace({
   detail,
   processState,
   processError,
+  progressNotice,
   actionRequestState,
   actionRequestError,
   onProcess,
+  onRefreshStatus,
   onPropose,
   onDecision,
 }: {
   detail: CallDetailPayload;
   processState: ProcessState;
   processError: string | null;
+  progressNotice: string | null;
   actionRequestState: ActionRequestState;
   actionRequestError: string | null;
-  onProcess: () => void;
+  onProcess: (call: CallRecord) => void;
+  onRefreshStatus: () => void;
   onPropose: () => void;
   onDecision: (actionId: string, decision: "approve" | "reject") => void;
 }) {
@@ -697,7 +890,19 @@ function CallDetailWorkspace({
   const visibleError = visibleCallError(processError, call.last_error);
   const intelligence = analysis?.analysis_json;
   const canProcess = call.status === "UPLOADED" || call.status === "FAILED" || call.status === "NEEDS_REVIEW";
-  const isBusy = call.status === "PROCESSING" || processState === "processing";
+  const progress = mapCallProcessingProgress({
+    status: call.status,
+    hasTranscript: Boolean(transcript),
+    hasAnalysis: Boolean(analysis),
+    actionPolicyState,
+    requestPending: processState === "processing" || actionRequestState === "proposing",
+  });
+  const reviewWasResolved = ["APPROVED_ACTION", "EXECUTING_ACTION", "COMPLETED_ACTION", "REJECTED_ACTION"].includes(actionPolicyState);
+  const showProcessingProgress = (
+    processState !== "idle" && !(processState === "success" && reviewWasResolved)
+  ) || actionRequestState === "proposing" || call.status === "PROCESSING" || call.status === "FAILED" || call.status === "NEEDS_REVIEW";
+  const forceProgressAttention = processState === "error";
+  const showProcessButton = canProcess && !showProcessingProgress;
   const isActionBusy = actionRequestState !== "idle";
   const timeline = buildCallTimeline(detail);
   const alertPresentation = intelligence && (intelligence.priority === "HIGH" || intelligence.priority === "URGENT")
@@ -739,6 +944,19 @@ function CallDetailWorkspace({
           </>}
         </div>
       </header>
+
+      {showProcessingProgress && (
+        <CallProcessingProgress
+          progress={progress}
+          callStatus={call.status}
+          errorMessage={visibleError ?? (processState === "error" ? "The saved call needs attention before its workflow outcome can be confirmed." : null)}
+          progressNotice={progressNotice}
+          canRetry={canProcess}
+          forceAttention={forceProgressAttention}
+          onRetry={() => onProcess(call)}
+          onRefreshStatus={onRefreshStatus}
+        />
+      )}
 
       <div className="review-columns">
         <div className="source-review-column">
@@ -795,16 +1013,14 @@ function CallDetailWorkspace({
               </div>
             )}
 
-            {canProcess && (
-              <button className="primary-button process-button" type="button" onClick={onProcess} disabled={isBusy}>
-                {isBusy ? <><span className="spinner" aria-hidden="true" /> Processing call</> : call.status === "UPLOADED" ? "Process call" : "Retry processing"}
+            {showProcessButton && (
+              <button className="primary-button process-button" type="button" onClick={() => onProcess(call)}>
+                {call.status === "UPLOADED" ? "Process call" : "Retry processing"}
               </button>
             )}
-            {isBusy && <p className="process-status" role="status">Processing call…</p>}
-            {processState === "success" && call.status === "ANALYZED" && (
-              <p className="process-status is-success" role="status">Transcript and call intelligence saved.</p>
+            {visibleError && !showProcessingProgress && (
+              <p className={`process-status ${processError ? "is-error" : "is-warning"}`} role={processError ? "alert" : "status"}>{visibleError}</p>
             )}
-            {visibleError && <p className={`process-status ${processError ? "is-error" : "is-warning"}`} role={processError ? "alert" : "status"}>{visibleError}</p>}
 
             {intelligence ? (
               <>
@@ -827,7 +1043,7 @@ function CallDetailWorkspace({
               </>
             ) : (
               <div className="analysis-empty">
-                <strong>{call.status === "PROCESSING" ? "Analysis in progress" : "No validated analysis yet"}</strong>
+                <strong>Call intelligence will appear here</strong>
                 <span>Call type, priority, and supporting evidence appear here after processing.</span>
               </div>
             )}
@@ -847,110 +1063,109 @@ function CallDetailWorkspace({
               </ul>
             ) : <p className="detail-muted">Evidence quotes will appear here alongside validated analysis.</p>}
           </section>
-          <section className="detail-panel agent-proposal-panel" aria-labelledby="agent-proposal-title">
-            <div className="agent-proposal-heading">
-              <div>
-                <h3 id="agent-proposal-title">Follow-up</h3>
-              </div>
-              <span className="proposal-origin">Deterministic</span>
-            </div>
-            {!intelligence ? (
-              <div className="agent-proposal-empty">
-                <p className="detail-muted">A follow-up proposal can be reviewed after the call has validated intelligence.</p>
-                <span className="approval-boundary">Customer state never changes without human approval.</span>
-              </div>
-            ) : actionPolicyState === "NO_ACTION_REQUIRED" ? (
-              <div className="no-action-outcome" role="status">
-                <h4>No follow-up action required</h4>
-                <p>
-                  {intelligence.outcome === "RESOLVED" && !intelligence.signals.followUpRequired
-                    ? "Resolved during the call. No further action is needed."
-                    : "No follow-up is needed for this call."}
-                </p>
-              </div>
-          ) : actions.length === 0 && actionPolicyState === "ACTION_AVAILABLE" ? (
-              <div className="agent-proposal-empty">
-                <p className="detail-muted">No deterministic proposal is saved for this call yet.</p>
-                <button className="secondary-button" type="button" onClick={onPropose} disabled={isActionBusy}>
-                  {actionRequestState === "proposing" ? <><span className="spinner" aria-hidden="true" /> Creating proposal</> : "Generate action proposal"}
-                </button>
-              </div>
-            ) : actions.length > 0 ? (
-              <div className="agent-action-list">
-                {actions.map((action) => {
-                  const isPending = action.status === "PENDING";
-                  const canResume = action.status === "APPROVED" || action.status === "FAILED";
-                  return (
-                    <article className={`agent-action-card action-${action.status.toLowerCase()}`} key={action.id}>
-                      <div className="agent-action-title-row">
-                        <div>
-                          <span className="field-label">{action.payload_json.priority} priority · {isPending ? "approval required" : action.status === "REJECTED" ? "rejected by reviewer" : "human approved"}</span>
-                          <h4>{action.payload_json.title}</h4>
-                        </div>
-                        <span className={`action-status status-${action.status.toLowerCase().replaceAll("_", "-")}`}>{formatStatus(action.status)}</span>
-                      </div>
-                      <p className="action-reason">{action.payload_json.reason}</p>
-                      {isPending && (
-                        <div className="approval-boundary">
-                          <strong>Review before applying</strong>
-                          <span>No customer or pipeline state changes until you approve this follow-up.</span>
-                        </div>
-                      )}
-                      {action.status !== "COMPLETED" && (
-                        <div className="action-effect">
-                          <span className="field-label">{isPending ? "If approved" : "Expected effect"}</span>
-                          <p>{describeActionEffect(action)}</p>
-                        </div>
-                      )}
-                      {action.status === "REJECTED" && <p className="action-result is-rejected">Rejected. No business state changed.</p>}
-                      {action.status === "COMPLETED" && action.payload_json.execution?.result && (
-                        <div className="action-outcome">
-                          <span className="field-label">Recorded outcome</span>
-                          <p>{action.payload_json.execution.result}</p>
-                        </div>
-                      )}
-                      {action.status === "FAILED" && action.error_message && <p className="action-result is-error" role="alert">{action.error_message}</p>}
-                      {action.status === "EXECUTING" && <p className="action-result">Approved; deterministic execution is in progress.</p>}
-                      {(isPending || canResume) && (
-                        <div className="action-controls">
-                          {isPending && (
-                            <>
-                              <button className="primary-button" type="button" onClick={() => onDecision(action.id, "approve")} disabled={isActionBusy}>
-                                {actionRequestState === "approving" ? <><span className="spinner" aria-hidden="true" /> Approving</> : "Approve follow-up"}
-                              </button>
-                              <button className="secondary-button" type="button" onClick={() => onDecision(action.id, "reject")} disabled={isActionBusy}>
-                                {actionRequestState === "rejecting" ? "Rejecting…" : "Reject"}
-                              </button>
-                            </>
-                          )}
-                          {canResume && (
-                            <button className="primary-button" type="button" onClick={() => onDecision(action.id, "approve")} disabled={isActionBusy}>
-                              {actionRequestState === "approving" ? <><span className="spinner" aria-hidden="true" /> Executing</> : action.status === "FAILED" ? "Retry approved action" : "Continue approved action"}
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </article>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="agent-proposal-empty">
-                <p className="detail-muted">No action decision is available for this call yet.</p>
-              </div>
-            )}
-            {actionRequestError && <p className="action-result is-error" role="alert">{actionRequestError}</p>}
-          {demoCustomer && (
-            <div className="demo-customer-state">
-              <span className="field-label">Customer status</span>
-              <span className={`health-pill health-${(demoCustomer.health_status ?? "unknown").toLowerCase().replaceAll("_", "-")}`}>
-                {formatStatus(demoCustomer.health_status ?? "UNKNOWN")}
-              </span>
-            </div>
-          )}
-          </section>
         </div>
       </div>
+      <section className="detail-panel agent-proposal-panel" aria-labelledby="agent-proposal-title">
+        <div className="agent-proposal-heading">
+          <div>
+            <h3 id="agent-proposal-title">Recommended response</h3>
+          </div>
+          <span className="proposal-origin">Deterministic</span>
+        </div>
+        {!intelligence ? (
+          <div className="agent-proposal-empty">
+            <p className="detail-muted">A recommendation will appear after the call has validated intelligence.</p>
+          </div>
+        ) : actionPolicyState === "NO_ACTION_REQUIRED" ? (
+          <div className="no-action-outcome" role="status">
+            <h4>No follow-up action required</h4>
+            <p>
+              {intelligence.outcome === "RESOLVED" && !intelligence.signals.followUpRequired
+                ? "Resolved during the call. No further action is needed."
+                : "No follow-up is needed for this call."}
+            </p>
+          </div>
+        ) : actions.length === 0 && actionPolicyState === "ACTION_AVAILABLE" ? (
+          <div className="agent-proposal-empty">
+            <p className="detail-muted">No recommendation is saved for this call yet.</p>
+            <button className="secondary-button" type="button" onClick={onPropose} disabled={isActionBusy}>
+              {actionRequestState === "proposing" ? <><span className="spinner" aria-hidden="true" /> Creating proposal</> : "Generate action proposal"}
+            </button>
+          </div>
+        ) : actions.length > 0 ? (
+          <div className="agent-action-list">
+            {actions.map((action) => {
+              const isPending = action.status === "PENDING";
+              const canResume = action.status === "APPROVED" || action.status === "FAILED";
+              return (
+                <article className={`agent-action-card action-${action.status.toLowerCase()}`} key={action.id}>
+                  <div className="agent-action-title-row">
+                    <div>
+                      <span className="field-label">{action.payload_json.priority} priority · {isPending ? "approval required" : action.status === "REJECTED" ? "rejected by reviewer" : "human approved"}</span>
+                      <h4>{action.payload_json.title}</h4>
+                    </div>
+                    <span className={`action-status status-${action.status.toLowerCase().replaceAll("_", "-")}`}>{formatStatus(action.status)}</span>
+                  </div>
+                  <p className="action-reason">{action.payload_json.reason}</p>
+                  {isPending && (
+                    <div className="approval-boundary">
+                      <strong>Review before applying</strong>
+                      <span>No customer or pipeline changes occur until you approve.</span>
+                    </div>
+                  )}
+                  {action.status !== "COMPLETED" && (
+                    <div className="action-effect">
+                      <span className="field-label">{isPending ? "If approved" : "Expected effect"}</span>
+                      <p>{describeActionEffect(action)}</p>
+                    </div>
+                  )}
+                  {action.status === "REJECTED" && <p className="action-result is-rejected">Rejected. No business state changed.</p>}
+                  {action.status === "COMPLETED" && action.payload_json.execution?.result && (
+                    <div className="action-outcome">
+                      <span className="field-label">Recorded outcome</span>
+                      <p>{action.payload_json.execution.result}</p>
+                    </div>
+                  )}
+                  {action.status === "FAILED" && action.error_message && <p className="action-result is-error" role="alert">{action.error_message}</p>}
+                  {action.status === "EXECUTING" && <p className="action-result">Approved; deterministic execution is in progress.</p>}
+                  {(isPending || canResume) && (
+                    <div className="action-controls">
+                      {isPending && (
+                        <>
+                          <button className="primary-button" type="button" onClick={() => onDecision(action.id, "approve")} disabled={isActionBusy}>
+                            {actionRequestState === "approving" ? <><span className="spinner" aria-hidden="true" /> Approving</> : "Approve follow-up"}
+                          </button>
+                          <button className="secondary-button" type="button" onClick={() => onDecision(action.id, "reject")} disabled={isActionBusy}>
+                            {actionRequestState === "rejecting" ? "Rejecting…" : "Reject"}
+                          </button>
+                        </>
+                      )}
+                      {canResume && (
+                        <button className="primary-button" type="button" onClick={() => onDecision(action.id, "approve")} disabled={isActionBusy}>
+                          {actionRequestState === "approving" ? <><span className="spinner" aria-hidden="true" /> Executing</> : action.status === "FAILED" ? "Retry approved action" : "Continue approved action"}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </article>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="agent-proposal-empty">
+            <p className="detail-muted">No action decision is available for this call yet.</p>
+          </div>
+        )}
+        {actionRequestError && <p className="action-result is-error" role="alert">{actionRequestError}</p>}
+        {demoCustomer && (
+          <div className="demo-customer-state">
+            <span className="field-label">Current customer status</span>
+            <span className={`health-pill health-${(demoCustomer.health_status ?? "unknown").toLowerCase().replaceAll("_", "-")}`}>
+              {formatStatus(demoCustomer.health_status ?? "UNKNOWN")}
+            </span>
+          </div>
+        )}
+      </section>
       <section className="detail-panel timeline-panel" aria-labelledby="activity-title">
         <div className="timeline-heading">
           <div className="detail-panel-heading">
