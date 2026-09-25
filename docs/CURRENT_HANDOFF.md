@@ -628,6 +628,7 @@ After the merge, `AGENTS.md` was also updated to prefer one bounded real local p
 - `npm test`: 53 passed, 0 failed.
 - `npm run lint`: passed.
 - `npm run build`: passed.
+- Code review found and resolved the runbook disclosure, linked-customer fallback, accessible call-row name, and critical metadata legibility issues. Re-review found no remaining Critical or Important findings.
 - Built app inspected in Codex's in-app browser at `http://localhost:3000/`. The verified call `53d0f8b5-e520-42fb-9c0a-a64fa1212cdd` was opened read-only; the existing `NEEDS_REVIEW` call was also inspected without retrying it. No Process, Retry, Approve, or Reset action was triggered.
 - The Loom was opened, played, and scrubbed in Codex's in-app browser; its public preview frame was visually inspected and its transcript used only as supporting context.
 
@@ -636,3 +637,4 @@ After the merge, `AGENTS.md` was also updated to prefer one bounded real local p
 - Codex browser `Page.captureScreenshot` timed out on Loom, the deployed app, and localhost. No browser screenshots could be captured. Browser-rendered accessibility state was checked for the selected analyzed call, upload form, and `NEEDS_REVIEW` state.
 - Pixel-level certification at 1440×900, 1366×768, and 1280px, and a mobile screenshot check remain unavailable in this environment.
 - The inbox summary endpoint does not carry per-call classification or priority. Those details appear in the selected-call workspace without adding backend requests or changing the endpoint.
+- A few secondary helper and empty-state captions remain more compact than the primary workflow text.
