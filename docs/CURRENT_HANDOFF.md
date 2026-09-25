@@ -566,5 +566,36 @@ After the merge, `AGENTS.md` was also updated to prefer one bounded real local p
 - No migrations were created or applied. `supabase db push` was not run.
 - PR #4 was merged with exact-head protection after the user explicitly chose merge-first/post-deploy verification instead of creating a temporary branch deployment.
 - The existing Render service tracks `main` and auto-deploys main commits. Use that normal deployment for the remaining hosted retention verification; do not create another Render service.
-- The remaining verification target is unchanged: persist transcript + analysis, produce the deterministic retention proposal, complete approval/execution, leave Jordan `AT_RISK`, survive refresh without reprocessing, and preserve the analyzed call as the interview backup.
-- If the real environment exposes a provider problem after merge, fix it as a small bounded hotfix rather than reopening broad P4 scope.
+
+## 17. Post-merge P4 verification — 2026-09-25
+
+### Main and Render deployment
+
+- Live `origin/main`: `2a6742ee6b59f600a97d79a22835e2a73dcaf9dc`.
+- The existing Render Web Service `PestLaunch` is the only PestLaunch service, tracks `main`, and has auto-deploy enabled. Its latest deploy is `live` at `2a6742ee6b59f600a97d79a22835e2a73dcaf9dc`.
+- No new Render service or preview deployment was created.
+
+### Real local Gemini smoke test
+
+- The checkout did not contain a file named `.env`; the ignored root `.env.txt` contained the required variable names. It was loaded locally through dotenv without displaying values.
+- One real `createGeminiService().transcribe()` operation sent `demo/recordings/retention-risk.wav` inline. The provider accepted it, `gemini-3.5-transcribe` completed on attempt 1, and the implementation returned only after its own `CallTranscriptSchema` validation passed.
+- The one-off inspection wrapper then incorrectly ran the schema against the whole return value including extra `attemptCount` metadata. That wrapper check failed before it printed or retained the transcript. This was a smoke-script mistake, not a provider failure; no second local transcription request was made. Local reasoning was therefore not run.
+
+### Hosted retention workflow
+
+- The fixed demo records were reset and verified. Jordan started `HEALTHY` / `WON`; Taylor `NEW`; Morgan `HEALTHY` / `WON`.
+- Hosted call ID: `53d0f8b5-e520-42fb-9c0a-a64fa1212cdd`, linked to Jordan Example (`demo_customer_id` `a1000000-0000-4000-8000-000000000001`). The fresh synthetic WAV was uploaded once through the deployed `/api/calls/ingest` endpoint after the controlled browser file chooser did not open. Processing and approval were then performed in the deployed UI.
+- One **Process call** request completed. Transcript persisted with `model_used = gemini-3.5-transcribe`, `attempt_count = 1`; the text describes repeated technician lateness, possible cancellation, and a request for follow-up.
+- Validated analysis persisted with `model_used = gemini-3.6-flash`, `call_type = COMPLAINT`, `cancellationRisk = true`, `complaint = true`, `followUpRequired = true`, `priority = HIGH`, and three transcript-grounded evidence quotes.
+- The reasoning router received HTTP 429 rate-limit responses from `gemini-3.8-flash` and `gemini-3.7-flash`, then succeeded on `gemini-3.6-flash`. The configured bounded fallback chain worked; analysis took about two minutes. Allow that time if processing from a cold or rate-limited provider state.
+- Deterministic `CREATE_RETENTION_FOLLOWUP` action `c924c6b9-82f4-547e-9bb8-aad9c1633cf5` was `PENDING` with Jordan still `HEALTHY` / `WON`. One approval completed the action and changed Jordan to `AT_RISK` / `WON`.
+- Refreshing and reopening the call preserved transcript, analysis, completed action, Jordan's state, and the full persisted activity timeline. The action row and execution timestamp remained unchanged. Render logs showed no additional Gemini model attempts after the refresh/reopen.
+- This is the persisted analyzed interview backup. Do not process or approve this call again.
+
+### Remaining notes and readiness
+
+- The controlled browser did not open its native file chooser; upload was verified through the same deployed ingestion endpoint used by the UI. The hosted process, analysis, proposal, approval, mutation, and post-refresh persistence were verified in the UI.
+- The new call's optional `caller_name` was empty, so the inbox labels it `Unassigned call`; its persisted `demo_customer_id` and detail view correctly link it to Jordan. Enter `Jordan Example` in the optional caller-name field during a UI rehearsal to give the inbox row a clearer label.
+- The first inbox load showed its retryable load error once; **Try again** loaded the existing calls, and the post-processing refresh loaded normally.
+- No database migration was created or applied, and `supabase db push` was not run.
+- P1, P2, and P3 remain complete. P4 is now interview-ready. Recommended state: feature freeze and interview rehearsal.

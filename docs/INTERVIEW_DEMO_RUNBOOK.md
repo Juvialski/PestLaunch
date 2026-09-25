@@ -3,12 +3,12 @@
 ## Pre-interview check
 
 - Open [pestlaunch.onrender.com](https://pestlaunch.onrender.com).
-- Click **Reset synthetic demo data**. Confirm Jordan Example is `HEALTHY` / `WON`, Taylor Example is `NEW`, and Morgan Example is `HEALTHY` / `WON`.
-- Confirm the synthetic retention recording is available at `demo/recordings/retention-risk.wav` and that the upload customer selector offers Jordan Example.
-- Confirm an already analyzed synthetic retention call is available for the backup path.
+- For the live walkthrough, click **Reset synthetic demo data**. Confirm Jordan Example is `HEALTHY` / `WON`, Taylor Example is `NEW`, and Morgan Example is `HEALTHY` / `WON`.
+- Confirm the synthetic retention recording is available at `demo/recordings/retention-risk.wav` and that the upload customer selector offers Jordan Example. Enter `Jordan Example` in the optional caller-name field so the inbox row is clearly labelled, then select Jordan as the linked synthetic customer.
+- Verified analyzed backup call: `53d0f8b5-e520-42fb-9c0a-a64fa1212cdd`. For the backup path, skip reset if you want to preserve the current `AT_RISK` customer state. The completed backup action is immutable and must not be approved or executed again.
 - Confirm no call intended for the demo is stuck in `PROCESSING`.
 
-**Readiness note (2026-09-25):** the original hosted primary call reached `NEEDS_REVIEW` because Gemini's Files upload returned HTTP 404 before transcription. The P4 branch now bypasses that Files hop for the small interview fixture by sending inline audio to the Interactions API, and the post-fix test/lint/build suite passes. The corrected branch has not yet been hosted because the existing Render service tracks `main` and PR previews are disabled. There is still no saved analyzed-call backup. Do not treat the live or backup path as ready until one hosted synthetic retention call completes successfully and its persisted transcript, analysis, proposal, approval/execution, customer mutation, and refresh behavior are checked.
+**Readiness note (2026-09-25):** P4 is merged and the existing main-tracking Render service is live at `2a6742ee6b59f600a97d79a22835e2a73dcaf9dc`. The local inline-audio transcription smoke test succeeded on `gemini-3.5-transcribe`; a wrapper mistake prevented that local run from printing its returned transcript, so local reasoning was not run. Hosted call `53d0f8b5-e520-42fb-9c0a-a64fa1212cdd` completed the persisted retention flow and is the analyzed backup. Hosted analysis used `gemini-3.6-flash` after 429 rate-limit responses on `gemini-3.8-flash` and `gemini-3.7-flash`; allow about two minutes for that fallback path. The call remained saved after refresh without another Gemini request or action execution.
 
 ## Recommended live walkthrough
 
@@ -31,7 +31,7 @@ Reset only restores the three fixed synthetic customer starting values. It keeps
 
 ## Backup path
 
-If live Gemini processing fails during the interview, open an already analyzed synthetic retention call, state briefly that the live model service is unavailable, and continue from the saved analysis through deterministic proposal, human approval, execution, and timeline. Use persisted application data; do not invent or manually seed model results. The backup call must be confirmed during the pre-interview check.
+If live Gemini processing fails during the interview, open the verified call `53d0f8b5-e520-42fb-9c0a-a64fa1212cdd`, state briefly that the live model service is unavailable, and show its persisted transcript, analysis, evidence, completed retention action, and activity timeline. This backup has already been approved and executed; do not click **Process call** or **Approve** again. Use persisted application data; do not invent or manually seed model results. If synthetic data was reset immediately before taking the backup path, Jordan may show `HEALTHY` because reset preserves call/action history but restores customer fields; describe the saved timeline as the completed historical action in that case.
 
 ## What not to claim
 
