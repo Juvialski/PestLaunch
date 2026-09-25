@@ -348,7 +348,14 @@ test("new retention proposal generates and persists one draft reused by refresh 
       summary: "The synthetic customer reports repeated late visits.",
       customerIntent: "The customer is considering cancellation.",
       outcome: "FOLLOW_UP_REQUIRED",
-      signals: { complaint: true, cancellationRisk: true, followUpRequired: true },
+      signals: {
+        newLead: false,
+        complaint: true,
+        cancellationRisk: true,
+        upsellOpportunity: false,
+        reactivationOpportunity: false,
+        followUpRequired: true,
+      },
     },
     actionType: "CREATE_RETENTION_FOLLOWUP",
     actionReason: "P2 detected cancellation risk or classified this call as a cancellation.",
@@ -566,7 +573,8 @@ test("approved termite lead follow-up applies only the fixed QUALIFIED pipeline 
   assert.equal(memory.state.customers[0]?.health_status, "HEALTHY");
   assert.equal(memory.state.customerMutations, 1);
   assert.deepEqual(ai.calls, { transcribe: 0, analyze: 0 });
-  assert.equal(ai.drafts.count, 0);
+  assert.equal(ai.drafts.count, 1);
+  assert.equal(proposal.body.action.payload_json.customerCommunication?.type, "EMAIL_DRAFT");
 });
 
 test("approved upsell is represented by the completed task action without a customer-field mutation", async () => {
@@ -591,6 +599,31 @@ test("approved upsell is represented by the completed task action without a cust
   assert.equal(memory.state.customerMutations, 0);
   assert.equal(memory.state.customers[0]?.health_status, "HEALTHY");
   assert.deepEqual(ai.calls, { transcribe: 0, analyze: 0 });
+  assert.equal(ai.drafts.count, 1);
+  assert.equal(proposal.body.action.payload_json.customerCommunication?.type, "EMAIL_DRAFT");
+});
+
+test("collections follow-up does not generate a customer email draft", async () => {
+  const collectionsAnalysis = analysis({
+    callType: "COLLECTIONS",
+    signals: {
+      newLead: false,
+      complaint: false,
+      cancellationRisk: false,
+      upsellOpportunity: false,
+      reactivationOpportunity: false,
+      collectionsIssue: true,
+      followUpRequired: true,
+    },
+  });
+  const memory = makeMemory({ analysis: analysisRow(collectionsAnalysis) });
+  const ai = createAiSpy();
+  const proposal = await propose(createTestApp(memory.supabase, ai.ai));
+
+  assert.equal(proposal.status, 201);
+  assert.equal(proposal.body.action.action_type, "CREATE_COLLECTIONS_FOLLOWUP");
+  assert.equal(proposal.body.action.payload_json.customerCommunication, undefined);
+  assert.equal(ai.drafts.count, 0);
 });
 
 test("rejection is idempotent, records a timestamp, and can never execute", async () => {
