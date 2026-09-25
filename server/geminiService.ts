@@ -42,9 +42,9 @@ export function createGeminiService(
       let attemptCount = 0;
 
       try {
-        // The app accepts recordings up to 25 MiB, well below the Gemini Interactions
-        // inline-data limit. Sending transient audio inline avoids an unnecessary Files
-        // API round trip and its separate upload endpoint.
+        // The interview fixtures are small enough for Gemini Interactions inline audio.
+        // Sending transient demo audio inline avoids the separate Files upload endpoint
+        // that returned HTTP 404 in the hosted P4 verification.
         const inlineAudio = geminiInlineAudio(audio, mimeType);
         let lastCategory: AiFailureCategory = "INVALID_OUTPUT";
 
