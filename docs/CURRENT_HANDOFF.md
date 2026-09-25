@@ -29,7 +29,11 @@ Repository:
 
 `Juvialski/PestLaunch`
 
-Current merged main after P3:
+Current live `main` after the P3 merge and handoff reconciliation:
+
+`c656f2d7b3730aabc34dd23c51b5d5b983f22c8b`
+
+P3 itself was merged as:
 
 `819f71a0750fe123868be37e00d56c96b6508742`
 
