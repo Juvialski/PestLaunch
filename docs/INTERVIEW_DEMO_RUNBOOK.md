@@ -35,9 +35,11 @@ The call inbox and selected-call review now share one workspace. Open the analyz
 
 1. The inbox row shows Jordan using the linked synthetic customer name, even though the optional caller-name field is blank.
 2. The selected call header shows `COMPLAINT`, `HIGH` priority, cancellation risk, and analyzed status.
-3. The progress strip follows the call from recording through transcript, AI insights, human review, and outcome.
-4. The AI summary and signal badges are separate from the source transcript and its supporting evidence quotes.
-5. The recommended action is labeled deterministic. Its completed state, recorded customer result, current customer health, and persisted timeline remain visible together.
+3. The original recording and source transcript sit beside the AI findings for direct review.
+4. The transcript evidence quotes show their speakers, so they can be checked against the source conversation.
+5. The deterministic follow-up result is separate from AI findings. Its approval state, customer status, and activity timeline remain visible.
+
+For the no-action case, select `21621eaa-0215-4d5f-88c6-c79977e4fd3b` and show the booking transcript, positive/resolved findings, and **No follow-up action required** result. Do not process the saved call again.
 
 For a fresh recording, use **Add recording**. Choose audio, optionally enter the caller name, link a synthetic customer if applicable, and upload. Blank caller names use the linked customer name; without a customer link the inbox says **Unassigned call**. Select the new call and click **Process call** once. Only approve or reject the newly proposed action during the live walkthrough; the backup call is already complete.
 
