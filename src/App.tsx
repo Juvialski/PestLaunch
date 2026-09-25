@@ -6,6 +6,8 @@ import type {
   CallSummary,
   CallTranscriptRow,
 } from "./shared/calls.js";
+import type { AgentActionRow, DemoCustomer } from "./shared/actions.js";
+import { buildCallTimeline } from "./shared/actionTimeline.js";
 import { MAX_AUDIO_UPLOAD_BYTES } from "./shared/calls.js";
 
 const ACCEPTED_EXTENSIONS = new Set(["mp3", "wav", "m4a", "webm"]);
@@ -15,16 +17,24 @@ type UploadState = "idle" | "uploading" | "success" | "error";
 type CallsState = "loading" | "ready" | "error";
 type DetailState = "idle" | "loading" | "ready" | "error";
 type ProcessState = "idle" | "processing" | "success" | "error";
+type ActionRequestState = "idle" | "proposing" | "approving" | "rejecting";
 type CallDetailPayload = {
   call: CallRecord;
   transcript: CallTranscriptRow | null;
   analysis: CallAnalysisRow | null;
+  demoCustomer: DemoCustomer | null;
+  actions: AgentActionRow[];
 };
 type ApiPayload = {
   calls?: CallSummary[];
+  customers?: DemoCustomer[];
   call?: CallRecord;
   transcript?: CallTranscriptRow | null;
   analysis?: CallAnalysisRow | null;
+  demoCustomer?: DemoCustomer | null;
+  actions?: AgentActionRow[];
+  action?: AgentActionRow | null;
+  reason?: string;
   error?: ApiErrorResponse["error"];
 };
 
@@ -47,7 +57,18 @@ async function fetchCallDetail(callId: string): Promise<CallDetailPayload> {
     call: payload.call,
     transcript: payload.transcript ?? null,
     analysis: payload.analysis ?? null,
+    demoCustomer: payload.demoCustomer ?? null,
+    actions: payload.actions ?? [],
   };
+}
+
+async function fetchDemoCustomers(): Promise<DemoCustomer[]> {
+  const response = await fetch("/api/demo/customers");
+  const payload = (await response.json()) as ApiPayload;
+  if (!response.ok) {
+    throw new Error(payload.error?.message ?? "Synthetic demo customers could not be loaded.");
+  }
+  return payload.customers ?? [];
 }
 
 export default function App() {
@@ -56,6 +77,11 @@ export default function App() {
   const [callsError, setCallsError] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [callerName, setCallerName] = useState("");
+  const [demoCustomers, setDemoCustomers] = useState<DemoCustomer[]>([]);
+  const [demoCustomersLoaded, setDemoCustomersLoaded] = useState(false);
+  const [selectedDemoCustomerId, setSelectedDemoCustomerId] = useState("");
+  const [demoResetState, setDemoResetState] = useState<"idle" | "resetting" | "error">("idle");
+  const [demoMessage, setDemoMessage] = useState("");
   const [uploadState, setUploadState] = useState<UploadState>("idle");
   const [uploadMessage, setUploadMessage] = useState("");
   const [isDragging, setIsDragging] = useState(false);
@@ -65,6 +91,9 @@ export default function App() {
   const [detailError, setDetailError] = useState<string | null>(null);
   const [processState, setProcessState] = useState<ProcessState>("idle");
   const [processError, setProcessError] = useState<string | null>(null);
+  const [actionRequestState, setActionRequestState] = useState<ActionRequestState>("idle");
+  const [actionRequestError, setActionRequestError] = useState<string | null>(null);
+  const [actionRequestNotice, setActionRequestNotice] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const detailRequestRef = useRef(0);
   const selectedCallIdRef = useRef<string | null>(null);
@@ -102,12 +131,63 @@ export default function App() {
     }
   }, []);
 
+  const loadDemoCustomers = useCallback(async () => {
+    const nextCustomers = await fetchDemoCustomers();
+    setDemoCustomers(nextCustomers);
+    return nextCustomers;
+  }, []);
+
+  const runActionRequest = async (
+    callId: string | null,
+    state: Exclude<ActionRequestState, "idle">,
+    url: string,
+  ) => {
+    if (actionRequestState !== "idle") return;
+    setActionRequestState(state);
+    setActionRequestError(null);
+    setActionRequestNotice(null);
+    try {
+      const response = await fetch(url, { method: "POST" });
+      const payload = (await response.json()) as ApiPayload;
+      if (!response.ok) throw new Error(payload.error?.message ?? "The action request could not be completed.");
+      if (payload.reason === "NO_PERMITTED_ACTION") {
+        setActionRequestNotice("No deterministic action applies to this validated analysis.");
+      }
+    } catch (error) {
+      setActionRequestError(error instanceof Error ? error.message : "The action request could not be completed.");
+    } finally {
+      if (callId && selectedCallIdRef.current === callId) await loadCallDetail(callId);
+      setActionRequestState("idle");
+    }
+  };
+
+  const handleDemoReset = async () => {
+    if (demoResetState === "resetting" || actionRequestState !== "idle" || !demoCustomersLoaded) return;
+    setDemoResetState("resetting");
+    setDemoMessage("");
+    try {
+      const response = await fetch("/api/demo/reset", { method: "POST" });
+      const payload = (await response.json()) as ApiPayload;
+      if (!response.ok) throw new Error(payload.error?.message ?? "Synthetic demo customers could not be reset.");
+      if (payload.customers) setDemoCustomers(payload.customers);
+      else await loadDemoCustomers();
+      if (selectedCallIdRef.current) await loadCallDetail(selectedCallIdRef.current);
+      setDemoMessage("The three synthetic demo customers are ready. Existing calls and action history were kept.");
+      setDemoResetState("idle");
+    } catch (error) {
+      setDemoMessage(error instanceof Error ? error.message : "Synthetic demo customers could not be reset.");
+      setDemoResetState("error");
+    }
+  };
+
   const selectCall = (callId: string) => {
     selectedCallIdRef.current = callId;
     setSelectedCallId(callId);
     setCallDetail(null);
     setProcessState("idle");
     setProcessError(null);
+    setActionRequestError(null);
+    setActionRequestNotice(null);
     void loadCallDetail(callId);
   };
 
@@ -129,12 +209,17 @@ export default function App() {
           call: payload.call,
           transcript: payload.transcript ?? null,
           analysis: payload.analysis ?? null,
+          demoCustomer: payload.demoCustomer ?? null,
+          actions: payload.actions ?? [],
         });
       }
       if (!response.ok) {
         throw new Error(payload.error?.message ?? "Call processing could not be completed.");
       }
       if (selectedCallIdRef.current === callId) setProcessState("success");
+      if (payload.analysis && selectedCallIdRef.current === callId) {
+        await runActionRequest(callId, "proposing", `/api/calls/${callId}/actions/propose`);
+      }
     } catch (error) {
       if (selectedCallIdRef.current === callId) {
         setProcessState("error");
@@ -164,6 +249,20 @@ export default function App() {
         }
         setCallsError(error instanceof Error ? error.message : "Recent calls could not be loaded.");
         setCallsState("error");
+      });
+    void fetchDemoCustomers()
+      .then((nextCustomers) => {
+        if (active) {
+          setDemoCustomers(nextCustomers);
+          setDemoCustomersLoaded(true);
+        }
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setDemoMessage(error instanceof Error ? error.message : "Synthetic demo customers could not be loaded.");
+          setDemoResetState("error");
+          setDemoCustomersLoaded(true);
+        }
       });
 
     return () => {
@@ -212,6 +311,9 @@ export default function App() {
     formData.append("audio", selectedFile, selectedFile.name);
     if (callerName.trim()) {
       formData.append("caller_name", callerName.trim());
+    }
+    if (selectedDemoCustomerId) {
+      formData.append("demo_customer_id", selectedDemoCustomerId);
     }
     setUploadState("uploading");
     setUploadMessage("");
@@ -332,6 +434,35 @@ export default function App() {
             />
           </div>
 
+          <div className="demo-customer-controls">
+            <div className="demo-customer-select">
+              <label htmlFor="demo-customer">Synthetic demo customer <span>Optional</span></label>
+              <select
+                id="demo-customer"
+                value={selectedDemoCustomerId}
+                disabled={uploadState === "uploading" || demoCustomers.length === 0}
+                onChange={(event) => setSelectedDemoCustomerId(event.currentTarget.value)}
+              >
+                <option value="">No linked demo customer</option>
+                {demoCustomers.map((customer) => (
+                  <option key={customer.id} value={customer.id}>
+                    {customer.name} · {formatStatus(customer.customer_type ?? "SYNTHETIC")}
+                  </option>
+                ))}
+              </select>
+              {demoCustomers.length === 0 && <span className="demo-customer-hint">Initialize the fixed demo records to associate a call.</span>}
+            </div>
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => void handleDemoReset()}
+              disabled={uploadState === "uploading" || demoResetState === "resetting" || actionRequestState !== "idle" || !demoCustomersLoaded}
+            >
+              {!demoCustomersLoaded ? "Loading demo data…" : demoResetState === "resetting" ? "Preparing demo data…" : demoCustomers.length === 0 ? "Initialize synthetic demo data" : "Reset synthetic demo data"}
+            </button>
+          </div>
+          {demoMessage && <p className={`demo-message${demoResetState === "error" ? " is-error" : ""}`} role={demoResetState === "error" ? "alert" : "status"}>{demoMessage}</p>}
+
           <div className="upload-controls">
             <p id="upload-help" className="upload-help">MP3, WAV, M4A, or WebM · Up to 25 MB</p>
             <div className="upload-action-row">
@@ -440,7 +571,16 @@ export default function App() {
                 detail={callDetail}
                 processState={processState}
                 processError={processError}
+                actionRequestState={actionRequestState}
+                actionRequestError={actionRequestError}
+                actionRequestNotice={actionRequestNotice}
                 onProcess={() => void handleProcessCall()}
+                onPropose={() => void runActionRequest(callDetail.call.id, "proposing", `/api/calls/${callDetail.call.id}/actions/propose`)}
+                onDecision={(actionId, decision) => void runActionRequest(
+                  callDetail.call.id,
+                  decision === "approve" ? "approving" : "rejecting",
+                  `/api/actions/${actionId}/${decision}`,
+                )}
               />
             ) : null}
           </div>
@@ -458,17 +598,29 @@ function CallDetailWorkspace({
   detail,
   processState,
   processError,
+  actionRequestState,
+  actionRequestError,
+  actionRequestNotice,
   onProcess,
+  onPropose,
+  onDecision,
 }: {
   detail: CallDetailPayload;
   processState: ProcessState;
   processError: string | null;
+  actionRequestState: ActionRequestState;
+  actionRequestError: string | null;
+  actionRequestNotice: string | null;
   onProcess: () => void;
+  onPropose: () => void;
+  onDecision: (actionId: string, decision: "approve" | "reject") => void;
 }) {
-  const { call, transcript, analysis } = detail;
+  const { call, transcript, analysis, demoCustomer, actions } = detail;
   const intelligence = analysis?.analysis_json;
   const canProcess = call.status === "UPLOADED" || call.status === "FAILED" || call.status === "NEEDS_REVIEW";
   const isBusy = call.status === "PROCESSING" || processState === "processing";
+  const isActionBusy = actionRequestState !== "idle";
+  const timeline = buildCallTimeline(detail);
   const signals = intelligence
     ? [
         ["newLead", "New lead"],
@@ -597,17 +749,15 @@ function CallDetailWorkspace({
               </ul>
             </div>
 
-            <div className="proposed-action">
-              <span className="field-label">Proposed action</span>
+            <div className="proposed-action ai-recommendation">
+              <span className="field-label">AI recommendation · context only</span>
               {intelligence.recommendedAction ? (
                 <div>
                   <strong>{formatStatus(intelligence.recommendedAction.type)}</strong>
                   <p>{intelligence.recommendedAction.reason}</p>
-                  <span className="proposal-note">
-                    {intelligence.recommendedAction.requiresApproval ? "Proposal only · human approval required" : "Proposal only · no action has been taken"}
-                  </span>
+                  <span className="proposal-note">AI context only. This recommendation is never an executable command.</span>
                 </div>
-              ) : <p className="detail-muted">No action proposed for this call.</p>}
+              ) : <p className="detail-muted">The model did not return a recommendation. Deterministic policy still evaluates the validated signals.</p>}
             </div>
             {analysis && <p className="model-note reasoning-model">Reasoning model · {analysis.model_used}</p>}
           </>
@@ -617,8 +767,112 @@ function CallDetailWorkspace({
             <span>Call classification and evidence will appear here after processing.</span>
           </div>
         )}
-      </section>
-    </div>
+
+        {intelligence && (
+          <section className="agent-proposal-section" aria-labelledby="agent-proposal-title">
+            <div className="agent-proposal-heading">
+              <div>
+                <p className="eyebrow">APPLICATION POLICY</p>
+                <h3 id="agent-proposal-title">Agent proposal</h3>
+              </div>
+              <span className="proposal-origin">Deterministic</span>
+            </div>
+
+            {actions.length === 0 ? (
+              <div className="agent-proposal-empty">
+                <p className="detail-muted">No deterministic proposal is saved for this call yet.</p>
+                <button className="secondary-button" type="button" onClick={onPropose} disabled={isActionBusy}>
+                  {actionRequestState === "proposing" ? <><span className="spinner" aria-hidden="true" /> Creating proposal</> : "Generate action proposal"}
+                </button>
+              </div>
+            ) : (
+              <div className="agent-action-list">
+                {actions.map((action) => {
+                  const isPending = action.status === "PENDING";
+                  const canResume = action.status === "APPROVED" || action.status === "FAILED";
+                  return (
+                    <article className={`agent-action-card action-${action.status.toLowerCase()}`} key={action.id}>
+                      <div className="agent-action-title-row">
+                        <div>
+                          <span className="field-label">{action.payload_json.priority} priority · approval required</span>
+                          <strong>{action.payload_json.title}</strong>
+                        </div>
+                        <span className={`action-status status-${action.status.toLowerCase().replaceAll("_", "-")}`}>{formatStatus(action.status)}</span>
+                      </div>
+                      <p>{action.payload_json.reason}</p>
+                      <div className="action-effect">
+                        <span className="field-label">Expected demo effect</span>
+                        <p>{describeActionEffect(action)}</p>
+                      </div>
+
+                      {isPending && <p className="approval-boundary">No customer or pipeline state changes until you approve this action.</p>}
+                      {action.status === "REJECTED" && <p className="action-result is-rejected">Rejected. No business state changed.</p>}
+                      {action.status === "COMPLETED" && action.payload_json.execution?.result && (
+                        <p className="action-result is-complete">{action.payload_json.execution.result}</p>
+                      )}
+                      {action.status === "FAILED" && action.error_message && <p className="action-result is-error" role="alert">{action.error_message}</p>}
+                      {action.status === "EXECUTING" && <p className="action-result">Approved; deterministic execution is in progress.</p>}
+
+                      {(isPending || canResume) && (
+                        <div className="action-controls">
+                          {isPending && (
+                            <>
+                              <button className="primary-button" type="button" onClick={() => onDecision(action.id, "approve")} disabled={isActionBusy}>
+                                {actionRequestState === "approving" ? <><span className="spinner" aria-hidden="true" /> Approving</> : "Approve"}
+                              </button>
+                              <button className="secondary-button" type="button" onClick={() => onDecision(action.id, "reject")} disabled={isActionBusy}>
+                                {actionRequestState === "rejecting" ? "Rejecting…" : "Reject"}
+                              </button>
+                            </>
+                          )}
+                          {canResume && (
+                            <button className="primary-button" type="button" onClick={() => onDecision(action.id, "approve")} disabled={isActionBusy}>
+                              {actionRequestState === "approving" ? <><span className="spinner" aria-hidden="true" /> Executing</> : action.status === "FAILED" ? "Retry approved action" : "Continue approved action"}
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+
+            {actionRequestError && <p className="action-result is-error" role="alert">{actionRequestError}</p>}
+            {actionRequestNotice && <p className="process-status" role="status">{actionRequestNotice}</p>}
+
+            <div className="demo-customer-state">
+              <span className="field-label">Linked synthetic customer</span>
+              {demoCustomer ? (
+                <>
+                  <strong>{demoCustomer.name}</strong>
+                  <span>Health · {formatStatus(demoCustomer.health_status ?? "UNKNOWN")}</span>
+                  <span>Pipeline · {formatStatus(demoCustomer.pipeline_stage ?? "UNKNOWN")}</span>
+                </>
+              ) : <p className="detail-muted">No linked demo customer. Approved follow-ups still appear as completed action tasks.</p>}
+            </div>
+          </section>
+        )}
+        </section>
+        <section className="detail-panel timeline-panel" aria-labelledby="activity-title">
+          <div className="detail-panel-heading">
+            <p className="eyebrow">PERSISTED ACTIVITY</p>
+            <h3 id="activity-title">Call timeline</h3>
+          </div>
+          <ol className="activity-timeline">
+            {timeline.map((event, index) => (
+              <li key={`${event.occurredAt}-${event.label}-${index}`}>
+                <span className="timeline-marker" aria-hidden="true" />
+                <div>
+                  <strong>{event.label}</strong>
+                  {event.detail && <p>{event.detail}</p>}
+                  <time dateTime={event.occurredAt}>{formatDate(event.occurredAt)}</time>
+                </div>
+              </li>
+            ))}
+          </ol>
+        </section>
+      </div>
   );
 }
 
@@ -628,6 +882,17 @@ function formatDate(value: string): string {
     return "Date unavailable";
   }
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(date);
+}
+
+function describeActionEffect(action: AgentActionRow): string {
+  const expected = action.payload_json.expectedChanges.customer;
+  if (expected?.healthStatus === "AT_RISK") {
+    return "If approved, the linked synthetic customer health will be set to AT_RISK.";
+  }
+  if (expected?.pipelineStage === "QUALIFIED") {
+    return "If approved, the linked synthetic termite lead may move from NEW to QUALIFIED.";
+  }
+  return "If approved, this completed action record represents the created follow-up task; no customer fields are changed.";
 }
 
 function formatSegmentTime(startMs?: number, endMs?: number): string {

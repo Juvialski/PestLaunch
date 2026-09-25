@@ -77,6 +77,14 @@ select uploaded call -> Process call -> transcript -> validated analysis -> pers
 
 Opening, selecting, refreshing, or loading a call never invokes Gemini. Only `POST /api/calls/:id/process` starts processing. A valid analyzed call returns its saved result; retries reuse a valid saved transcript. Gemini fallbacks are bounded and logged. Exhausted recoverable AI failures become `NEEDS_REVIEW`; storage and application failures become `FAILED`. Proposed actions are display-only in P2.
 
+## P3: Deterministic actions and human approval
+
+P3 consumes saved, validated P2 analysis. Application policy chooses at most one action per call in this order: retention risk, collections, new lead follow-up, reactivation, then upsell. The model's `recommendedAction.type` is displayed only as context and is never executed.
+
+Every action requires human approval. Approval conditionally claims deterministic execution; rejection records the decision without changing a customer. Retention approval can mark the fixed synthetic retention customer `AT_RISK`; termite-lead approval can move the fixed lead to `QUALIFIED`; the completed action row itself represents upsell, collections, and reactivation tasks.
+
+Proposal IDs are deterministic per call and reuse the existing `agent_actions` primary key. Repeated/concurrent proposals return the same action; conditional state transitions prevent duplicate execution. Failed approved execution retains its error and approval, and can be retried up to three times. Fixed synthetic fixtures are initialized/reset by an explicit action that never deletes calls or action history. P3 makes no Gemini calls and requires no database migration.
+
 ### Local setup
 
 Requirements: Node.js 22 or newer and an existing Supabase project.
@@ -95,13 +103,20 @@ Current API:
 - `GET /api/calls/:id` — retrieve a call with its persisted transcript and analysis.
 - `GET /api/calls/:id/audio` — redirect to a short-lived signed URL for the private recording.
 - `POST /api/calls/:id/process` — explicitly transcribe and analyze one call.
+- `POST /api/calls/:id/actions/propose` — create or return the deterministic proposal from saved analysis without Gemini.
+- `POST /api/actions/:id/approve` — approve and execute the allowlisted demo effect.
+- `POST /api/actions/:id/reject` — reject a pending proposal without a business-state mutation.
+- `GET /api/demo/customers` — list only the fixed synthetic demo personas.
+- `POST /api/demo/reset` — initialize/reset those personas without deleting calls or action history.
+
+Call detail now includes the linked demo customer and persisted action history. Its activity timeline is derived from saved call, transcript, analysis, decision, and execution records.
 
 Audio is uploaded before its `calls` row is inserted. If row creation fails, the API attempts to remove the stored object and returns an error instead of claiming success.
 
 Available scripts:
 
 - `npm.cmd run dev` — run the API and Vite development server.
-- `npm.cmd test` — run focused audio-ingestion and call-processing API tests (AI is injected in tests).
+- `npm.cmd test` — run audio-ingestion, P2 processing, P3 policy/action API, and persisted-timeline tests (AI is injected in tests).
 - `npm.cmd run typecheck` — check client, server, and test TypeScript.
 - `npm.cmd run lint` — run ESLint.
 - `npm.cmd run build` — typecheck and create the production client and server build.
@@ -111,7 +126,7 @@ Available scripts:
 
 The Gemini model routing lives in `server/geminiService.ts`. Transcription uses `gemini-3.5-transcribe` then `gemini-3.8-flash`; reasoning uses `gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.6-flash`, and `gemini-3.5-flash`. Model attempts do not repeat automatically.
 
-P2 required no migration. Do not run `supabase db push` against the hosted project. The next phase is **P3: deterministic proposal, human approval, demo execution, and audit trail**.
+P2 and P3 required no migration. Do not run `supabase db push` against the hosted project. The next bounded phase is **P4: Demo hardening and interview readiness**; do not broaden the product automatically.
 
 ## Planning
 

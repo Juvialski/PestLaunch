@@ -4,6 +4,7 @@ import express from "express";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import request from "supertest";
 import type { CallAnalysis, CallAnalysisRow, CallTranscriptRow } from "../src/shared/calls.js";
+import type { AgentActionRow, DemoCustomer } from "../src/shared/actions.js";
 import type { CallsAiService, CallTranscriptionResult } from "../server/aiTypes.js";
 import { createCallsRouter } from "../server/callsRouter.js";
 
@@ -155,6 +156,8 @@ function createMemorySupabase(options: {
   call?: FakeCall;
   transcript?: ReturnType<typeof transcriptRow> | null;
   analysis?: ReturnType<typeof analysisRow> | null;
+  actions?: AgentActionRow[];
+  demoCustomer?: DemoCustomer | null;
   audioError?: Error;
   analysisUpsertError?: Error;
 } = {}) {
@@ -162,6 +165,8 @@ function createMemorySupabase(options: {
     call: options.call ?? fakeCall(),
     transcript: options.transcript ?? null,
     analysis: options.analysis ?? null,
+    actions: options.actions ?? [],
+    demoCustomer: options.demoCustomer ?? null,
   };
   const calls = { audioDownloads: 0, signedUrls: 0, transcriptWrites: 0, analysisWrites: 0 };
 
@@ -230,6 +235,14 @@ function createMemorySupabase(options: {
           } as ReturnType<typeof analysisRow>;
           return { data: state.analysis, error: null };
         }
+      }
+      if (this.table === "agent_actions" && this.operation === "select") {
+        const found = state.actions.filter((row) => this.matches(row as unknown as Record<string, unknown>));
+        return { data: single ? found[0] ?? null : found, error: null };
+      }
+      if (this.table === "demo_customers" && this.operation === "select") {
+        const found = this.matches(state.demoCustomer as unknown as Record<string, unknown> | null) ? state.demoCustomer : null;
+        return { data: single ? found : found ? [found] : [], error: null };
       }
       throw new Error(`Unexpected Supabase ${this.operation} on ${this.table}.`);
     }

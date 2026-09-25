@@ -29,11 +29,15 @@ Repository:
 
 `Juvialski/PestLaunch`
 
-Main before the P2 implementation branch:
+Main immediately before P3:
 
-`927e39d883462e7348f2351c72ee3ecc71236576`
+`e0a8e5b7321c5226e23640e1f2487873febc00f2`
 
-P1 is merged. P2 is implemented on `codex/p2-gemini-call-intelligence` and is delivered as one PR.
+P1 and P2 are merged. P2 was delivered as PR #2, `P2: Gemini transcription and call intelligence`, from `codex/p2-gemini-call-intelligence`.
+P2 head: `c0d701a5c7da02aef98b5c65e9eab13ed3cfa5cb`.
+The merged P2 baseline is `e0a8e5b7321c5226e23640e1f2487873febc00f2`.
+
+P3 is implemented on `codex/p3-deterministic-actions` from the merged P2 baseline. It completes deterministic action proposals, human decisions, fixed synthetic demo mutations, and persisted call activity without a new database migration or Gemini calls in P3.
 
 P1 was merged as:
 
@@ -147,7 +151,8 @@ The repository already contains a foundation migration with a different timestam
 
 Therefore **do not casually run `supabase db push` against the live PestLaunch project**. The live schema already exists and migration history needs deliberate reconciliation before normal migration-promotion workflows are used.
 
-Do not recreate the P1 schema during P2.
+Do not recreate the P1 schema. P2 and P3 required no schema migrations.
+No P3 migration was created or applied, and `supabase db push` was not run for P3.
 
 Only introduce a new migration if the next phase genuinely needs a schema change.
 
@@ -379,27 +384,65 @@ Keep the classifier specifically useful for PestLaunch. It should understand con
 
 Do not build RAG or a large knowledge system for this phase.
 
-## 12. Explicitly deferred to P3
+## 12. P3 implementation: Deterministic actions and human approval
 
-P3 will add:
+P3 starts from merged P2 main at `e0a8e5b7321c5226e23640e1f2487873febc00f2` and completes the interview flow:
 
 ```
-analysis
--> deterministic policy engine
--> proposed action
--> Approve / Reject
--> demo customer/pipeline/task mutation
--> audit history
+persisted validated P2 analysis
+-> deterministic allowlisted proposal
+-> human Approve / Reject
+-> bounded demo customer update or completed task record
+-> call activity timeline from persisted state
 ```
 
-Do not implement these in P2:
+P3 action types:
 
-- policy engine
-- approval/rejection
-- customer-health mutation
-- pipeline mutation
-- retention-task execution
-- outbound customer communication
+- `CREATE_RETENTION_FOLLOWUP`
+- `CREATE_SALES_FOLLOWUP`
+- `CREATE_UPSELL_TASK`
+- `CREATE_COLLECTIONS_FOLLOWUP`
+- `CREATE_REACTIVATION_FOLLOWUP`
+
+The policy produces at most one primary action per call, in this precedence:
+
+1. cancellation risk or `CANCELLATION` call type -> retention follow-up (`HIGH` priority)
+2. collections issue or `COLLECTIONS` call type -> collections follow-up
+3. new-lead signal or `NEW_LEAD` call type together with follow-up required -> sales follow-up
+4. reactivation opportunity or `REACTIVATION` call type -> reactivation follow-up
+5. upsell opportunity -> upsell task
+
+P2 `recommendedAction.type` remains AI context only. It is never read as an executable command. Proposal titles, reasons, priorities, target effects, and action types are created by application code and validated against strict Zod schemas.
+
+### P3 API and lifecycle
+
+- `POST /api/calls/:id/actions/propose` validates the persisted analysis and grounded transcript, runs the policy, and persists a `PENDING` action with `requires_approval = true`. It makes no Gemini request.
+- `POST /api/actions/:id/approve` conditionally advances `PENDING -> APPROVED -> EXECUTING -> COMPLETED`. Only the execution claim can apply the fixed demo mutation.
+- `POST /api/actions/:id/reject` conditionally advances `PENDING -> REJECTED`, records a payload decision timestamp, and performs no customer mutation.
+- `GET /api/demo/customers` returns only the fixed synthetic customer IDs.
+- `POST /api/demo/reset` upserts only those fixed personas to their known starting values; it does not delete calls or action history and accepts no caller-supplied IDs or patches.
+- `GET /api/calls/:id` now includes the linked customer and validated action history. It remains read-only.
+
+The action ID is deterministic per call and uses the existing `agent_actions.id` primary key. Existing rows are returned on repeated or concurrent proposal requests, so a call has one logical primary action even if its analysis later changes. Approval/rejection and execution use conditional status updates. Failed approved execution keeps the approval and error metadata and can be retried safely up to three execution attempts. Rejected actions cannot execute; completed actions are idempotent.
+
+### P3 demo effects
+
+- Retention customer: starts `HEALTHY` / `WON`; approved retention follow-up sets health to `AT_RISK`.
+- Termite lead: starts at pipeline `NEW`; approved sales follow-up may set it to `QUALIFIED`.
+- Mosquito customer: starts `HEALTHY` / `WON`; the completed upsell action itself represents the created task, with no customer-field mutation.
+
+The personas use fixed IDs and visibly synthetic names. Other linked records can receive a task action, but execution updates customer fields only for the fixed retention customer and termite lead. Timeline events are projected from saved call, transcript, analysis, action, and execution timestamps. Rejection records “No business state changed.”
+
+P3 makes zero Gemini calls for proposals, decisions, execution, reset, and timeline. Focused route tests inject a fake AI boundary and observe zero transcription/analysis calls. P2’s explicit processing and quota protections remain unchanged.
+
+P3 created no database migration and did not run `supabase db push`.
+
+### P3 validation actually run
+
+- `npm test` — 48 passed, 0 failed.
+- `npm run lint` — passed.
+- `npm run build` — passed, including client/server/test type checks, server compilation, and the Vite production build.
+- No live Render deployment or hosted Supabase end-to-end verification was run in P3; that belongs to P4 interview readiness.
 
 Also remain out of scope for the interview prototype unless explicitly requested:
 
@@ -452,7 +495,7 @@ For future Codex phases:
 - stop when the requested PR is opened
 - prioritize a dependable interview path over speculative architecture
 
-## 15. Next-chat instruction
+## 15. Next direction: P4 Demo hardening and interview readiness
 
 A new ChatGPT chat should read, in order:
 
@@ -461,6 +504,13 @@ A new ChatGPT chat should read, in order:
 3. `docs/PROTOTYPE_PLAN.md`
 4. relevant current code/live PR state
 
-Then continue with **P3 — deterministic proposal, human approval, demo execution, and audit trail**.
+P3 completes the core interview architecture. The next phase is **P4 — Demo hardening and interview readiness**, limited to:
 
-Do not repeat P2 or require the user to paste the full historical chat again. Keep P3 limited to deterministic policy, explicit approve/reject, simulated state changes, and audit history. Keep external messaging, authentication, phone providers, and CRM integrations deferred.
+- synthetic recordings and fixture reliability
+- deployed end-to-end verification
+- critical bugs and clear error states
+- stale `PROCESSING` recovery only if it threatens the demo
+- minor UX polish and demo reset reliability
+- interview walkthrough and rehearsal
+
+Do not start P4 automatically. Do not repeat P1/P2/P3 or require the user to paste the historical chat again. Keep external messaging, authentication, phone providers, and CRM integrations deferred.
