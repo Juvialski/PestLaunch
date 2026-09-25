@@ -10,7 +10,14 @@ const input: CustomerCommunicationDraftInput = {
     summary: "The caller reports repeated late visits.",
     customerIntent: "The customer is considering cancellation.",
     outcome: "FOLLOW_UP_REQUIRED",
-    signals: { complaint: true, cancellationRisk: true, followUpRequired: true },
+    signals: {
+      newLead: false,
+      complaint: true,
+      cancellationRisk: true,
+      upsellOpportunity: false,
+      reactivationOpportunity: false,
+      followUpRequired: true,
+    },
   },
   actionType: "CREATE_RETENTION_FOLLOWUP",
   actionReason: "P2 detected cancellation risk or classified this call as a cancellation.",
@@ -106,4 +113,40 @@ test("a timing word elsewhere in the transcript does not authorize a technician 
   const { service } = createService(output);
 
   await assert.rejects(service.draftCustomerCommunication(timingInput));
+});
+
+
+test("customer draft supports an upsell follow-up without switching models", async () => {
+  const upsellInput: CustomerCommunicationDraftInput = {
+    ...input,
+    customerName: "Morgan Example",
+    transcript: "We already have your regular pest control service. I wanted to ask whether you also offer mosquito treatment for the yard.",
+    analysis: {
+      summary: "Existing customer asks about mosquito treatment.",
+      customerIntent: "Learn about an additional mosquito treatment service.",
+      outcome: "FOLLOW_UP_REQUIRED",
+      signals: {
+        newLead: false,
+        complaint: false,
+        cancellationRisk: false,
+        upsellOpportunity: true,
+        reactivationOpportunity: false,
+        followUpRequired: true,
+      },
+    },
+    actionType: "CREATE_UPSELL_TASK",
+    actionReason: "P2 detected an upsell opportunity.",
+  };
+  const { service, requests } = createService(JSON.stringify({
+    subject: "Following up on mosquito treatment",
+    body: "Hi Morgan, thanks for asking about mosquito treatment. We can follow up with details and options for your property.",
+  }));
+
+  const result = await service.draftCustomerCommunication(upsellInput);
+
+  assert.equal(result.modelUsed, "gemini-3.5-flash-lite");
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0]?.model, "gemini-3.5-flash-lite");
+  assert.match(String(requests[0]?.input), /CREATE_UPSELL_TASK/);
+  assert.match(String(requests[0]?.input), /mosquito treatment/i);
 });
