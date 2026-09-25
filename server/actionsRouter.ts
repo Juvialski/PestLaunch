@@ -24,7 +24,7 @@ import {
   isDemoCustomerId,
 } from "./demoFixtures.js";
 import { proposeDeterministicAction } from "./actionPolicy.js";
-import type { CallsAiService } from "./aiTypes.js";
+import type { CallsAiService, CustomerCommunicationDraftInput } from "./aiTypes.js";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DNS_NAMESPACE = Buffer.from("6ba7b8109dad11d180b400c04fd430c8", "hex");
@@ -145,7 +145,7 @@ export function createActionsRouter({ supabase, ai, logger = console }: ActionsR
         return;
       }
 
-      if (action.action_type === "CREATE_RETENTION_FOLLOWUP") {
+      if (supportsCustomerCommunicationDraft(action.action_type)) {
         try {
           const draft = await ai.draftCustomerCommunication({
             ...(sourceResult.source.call.caller_name?.trim()
@@ -159,12 +159,15 @@ export function createActionsRouter({ supabase, ai, logger = console }: ActionsR
               customerIntent: sourceResult.source.analysis.customerIntent,
               outcome: sourceResult.source.analysis.outcome,
               signals: {
+                newLead: sourceResult.source.analysis.signals.newLead,
                 complaint: sourceResult.source.analysis.signals.complaint,
                 cancellationRisk: sourceResult.source.analysis.signals.cancellationRisk,
+                upsellOpportunity: sourceResult.source.analysis.signals.upsellOpportunity,
+                reactivationOpportunity: sourceResult.source.analysis.signals.reactivationOpportunity,
                 followUpRequired: sourceResult.source.analysis.signals.followUpRequired,
               },
             },
-            actionType: "CREATE_RETENTION_FOLLOWUP",
+            actionType: action.action_type,
             actionReason: proposal.reason,
           });
           const customerCommunication = CustomerCommunicationDraftSchema.parse({
@@ -496,6 +499,17 @@ async function loadProposalSource(supabase: SupabaseClient, callId: string): Pro
       cause: error,
     };
   }
+}
+
+function supportsCustomerCommunicationDraft(
+  actionType: AgentActionRow["action_type"],
+): actionType is CustomerCommunicationDraftInput["actionType"] {
+  return (
+    actionType === "CREATE_RETENTION_FOLLOWUP" ||
+    actionType === "CREATE_SALES_FOLLOWUP" ||
+    actionType === "CREATE_UPSELL_TASK" ||
+    actionType === "CREATE_REACTIVATION_FOLLOWUP"
+  );
 }
 
 function deterministicActionId(callId: string): string {
