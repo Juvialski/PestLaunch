@@ -7,9 +7,16 @@ export type CustomerCommunicationDraftInput = {
     summary: string;
     customerIntent: string;
     outcome: CallAnalysis["outcome"];
-    signals: Pick<CallAnalysis["signals"], "complaint" | "cancellationRisk" | "followUpRequired">;
+    signals: Pick<
+      CallAnalysis["signals"],
+      "newLead" | "complaint" | "cancellationRisk" | "upsellOpportunity" | "reactivationOpportunity" | "followUpRequired"
+    >;
   };
-  actionType: "CREATE_RETENTION_FOLLOWUP";
+  actionType:
+    | "CREATE_RETENTION_FOLLOWUP"
+    | "CREATE_SALES_FOLLOWUP"
+    | "CREATE_UPSELL_TASK"
+    | "CREATE_REACTIVATION_FOLLOWUP";
   actionReason: string;
 };
 
