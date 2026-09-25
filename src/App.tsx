@@ -8,6 +8,7 @@ import type {
 } from "./shared/calls.js";
 import type { AgentActionRow, DemoCustomer } from "./shared/actions.js";
 import { buildCallTimeline } from "./shared/actionTimeline.js";
+import { AUDIO_PLAYBACK_ERROR, visibleCallError } from "./shared/callErrorFeedback.js";
 import { MAX_AUDIO_UPLOAD_BYTES } from "./shared/calls.js";
 
 const ACCEPTED_EXTENSIONS = new Set(["mp3", "wav", "m4a", "webm"]);
@@ -616,6 +617,8 @@ function CallDetailWorkspace({
   onDecision: (actionId: string, decision: "approve" | "reject") => void;
 }) {
   const { call, transcript, analysis, demoCustomer, actions } = detail;
+  const [audioPlaybackFailedCallId, setAudioPlaybackFailedCallId] = useState<string | null>(null);
+  const visibleError = visibleCallError(processError, call.last_error);
   const intelligence = analysis?.analysis_json;
   const canProcess = call.status === "UPLOADED" || call.status === "FAILED" || call.status === "NEEDS_REVIEW";
   const isBusy = call.status === "PROCESSING" || processState === "processing";
@@ -651,9 +654,14 @@ function CallDetailWorkspace({
           preload="none"
           src={`/api/calls/${call.id}/audio`}
           aria-label={`Recording for ${call.caller_name?.trim() || call.original_filename}`}
+          onError={() => setAudioPlaybackFailedCallId(call.id)}
+          onPlaying={() => setAudioPlaybackFailedCallId(null)}
         >
           Your browser does not support audio playback.
         </audio>
+        {audioPlaybackFailedCallId === call.id && (
+          <p className="process-status is-error" role="alert">{AUDIO_PLAYBACK_ERROR}</p>
+        )}
 
         <div className="transcript-heading">
           <div>
@@ -708,8 +716,11 @@ function CallDetailWorkspace({
         {processState === "success" && call.status === "ANALYZED" && (
           <p className="process-status is-success" role="status">Transcript and call intelligence saved.</p>
         )}
-        {processError && <p className="process-status is-error" role="alert">{processError}</p>}
-        {call.last_error && <p className="last-error" role="status">{call.last_error}</p>}
+        {visibleError && (
+          processError
+            ? <p className="process-status is-error" role="alert">{visibleError}</p>
+            : <p className="last-error" role="alert">{visibleError}</p>
+        )}
 
         {intelligence ? (
           <>

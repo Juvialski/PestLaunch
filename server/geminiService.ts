@@ -39,51 +39,13 @@ export function createGeminiService(
   return {
     async transcribe(audio, mimeType) {
       if (!client) throw new AiConfigurationError();
-      let uploadedFile: Awaited<ReturnType<typeof client.files.upload>> | null = null;
       let attemptCount = 0;
 
       try {
-        const startedAt = Date.now();
-        try {
-          uploadedFile = await client.files.upload({
-            file: new Blob([Uint8Array.from(audio)], { type: mimeType }),
-            config: {
-              mimeType,
-              displayName: "PestLaunch call recording",
-              httpOptions: SDK_HTTP_OPTIONS,
-            },
-          });
-          logger.info("Gemini file upload completed.", {
-            task: "transcription_upload",
-            attempt: 1,
-            result: "success",
-            failureCategory: null,
-            durationMs: Date.now() - startedAt,
-          });
-        } catch (error) {
-          const category = classifyProviderFailure(error);
-          logger.warn("Gemini file upload failed.", {
-            task: "transcription_upload",
-            attempt: 1,
-            result: "failure",
-            failureCategory: category,
-            error: errorMessage(error),
-            durationMs: Date.now() - startedAt,
-          });
-          if (category === "CONFIGURATION") {
-            throw new AiConfigurationError("Gemini credentials were rejected while uploading the recording.");
-          }
-          throw new RecoverableAiError(
-            "Gemini could not accept the recording. Check the audio and retry.",
-            category,
-            0,
-          );
-        }
-
-        if (!uploadedFile.uri) {
-          throw new RecoverableAiError("Gemini did not return an audio reference.", "INVALID_OUTPUT", 0);
-        }
-
+        // The interview fixtures are small enough for Gemini Interactions inline audio.
+        // Sending transient demo audio inline avoids the separate Files upload endpoint
+        // that returned HTTP 404 in the hosted P4 verification.
+        const inlineAudio = geminiInlineAudio(audio, mimeType);
         let lastCategory: AiFailureCategory = "INVALID_OUTPUT";
 
         for (let index = 0; index < GEMINI_MODELS.transcription.length; index += 1) {
@@ -95,7 +57,7 @@ export function createGeminiService(
               model === GEMINI_MODELS.transcription[0]
                 ? {
                     model,
-                    input: [{ type: "audio", uri: uploadedFile.uri, mime_type: mimeType }],
+                    input: [inlineAudio],
                     generation_config: {
                       transcription_config: {
                         mode: {
@@ -113,7 +75,7 @@ export function createGeminiService(
                         type: "text",
                         text: TRANSCRIPTION_FALLBACK_PROMPT,
                       },
-                      { type: "audio", uri: uploadedFile.uri, mime_type: mimeType },
+                      inlineAudio,
                     ],
                     response_format: {
                       type: "text",
@@ -168,19 +130,6 @@ export function createGeminiService(
         if (error instanceof RecoverableAiError || error instanceof AiConfigurationError) throw error;
         const category = classifyProviderFailure(error);
         throw new RecoverableAiError("Gemini transcription could not be completed.", category, attemptCount);
-      } finally {
-        if (uploadedFile?.name) {
-          try {
-            await client.files.delete({ name: uploadedFile.name });
-          } catch (error) {
-            logger.warn("Temporary Gemini audio file cleanup failed.", {
-              task: "transcription_cleanup",
-              result: "failure",
-              failureCategory: classifyProviderFailure(error),
-              error: errorMessage(error),
-            });
-          }
-        }
       }
     },
 
@@ -360,6 +309,10 @@ function removeUnsupportedSchemaKeywords(value: unknown): unknown {
 
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+}
+
+export function geminiInlineAudio(audio: Buffer, mimeType: string) {
+  return { type: "audio" as const, data: audio.toString("base64"), mime_type: mimeType };
 }
 
 function categoryFromError(error: unknown): AiFailureCategory {

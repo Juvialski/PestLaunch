@@ -499,7 +499,7 @@ For future Codex phases:
 - stop when the requested PR is opened
 - prioritize a dependable interview path over speculative architecture
 
-## 15. Next direction: P4 Demo hardening and interview readiness
+## 15. Next direction at the P3 handoff: P4 Demo hardening and interview readiness
 
 A new ChatGPT chat should read, in order:
 
@@ -517,4 +517,49 @@ P3 completes the core interview architecture. The next phase is **P4 — Demo ha
 - minor UX polish and demo reset reliability
 - interview walkthrough and rehearsal
 
-Do not start P4 automatically. Do not repeat P1/P2/P3 or require the user to paste the historical chat again. Keep external messaging, authentication, phone providers, and CRM integrations deferred.
+These were the next-phase instructions at the P3 handoff. P4 execution results are appended in §16. Do not repeat P1/P2/P3 or require the user to paste the historical chat again. Keep external messaging, authentication, phone providers, and CRM integrations deferred.
+
+## 16. P4 — Demo Hardening and Interview Readiness
+
+P4 branch: `codex/p4-demo-hardening`
+
+Exact P4 baseline: `4101edce5901f16a2ee6185ef2e268462cb0e5d0`
+
+### Deployed state verified
+
+- The existing Render Web Service `PestLaunch` remains the only service; it serves `https://pestlaunch.onrender.com`, tracks `main`, and uses the existing build/start commands. No deployment configuration was changed and no deploy was triggered for P4.
+- Render reports the live deploy at `4101edce5901f16a2ee6185ef2e268462cb0e5d0`, the requested P4 baseline. Hosted P3 reset and customer endpoints respond.
+- The hosted reset API and UI both returned the three fixed synthetic customers at their expected starting values. The customer selector exposed Jordan, Taylor, and Morgan. After reset, the uploaded call remained in the inbox; reset preserved call history.
+
+### Primary retention scenario result
+
+- Three synthetic WAV fixtures were generated locally with Windows Speech; no real customer audio or cloud TTS was used.
+- `demo/recordings/retention-risk.wav` was uploaded once through the hosted ingestion endpoint and linked to the fixed Jordan Example customer. The deployed UI customer selector was separately confirmed to select Jordan Example.
+- One deployed **Process call** request was made. The call reached `NEEDS_REVIEW` after about 39 seconds. Render logs show the failure occurred during Gemini Files upload: HTTP 404 with an empty provider message, before any transcription or reasoning model ran.
+- Hosted test call ID: `2171e75b-bc29-49f5-8ddc-c76b363462c7`.
+- Persisted result: no transcript, analysis, or action; Jordan remains `HEALTHY` / `WON`. The call remains in the hosted inbox as `NEEDS_REVIEW`.
+- Live Gemini usage so far: one Files upload attempt from one process request; zero transcription-model calls and zero reasoning-model calls. No retry or secondary live scenario has been run yet.
+- Provider investigation isolated the failure to the Gemini Files transport: the upload endpoint returned HTTP 404 before either configured model was invoked. The installed `@google/genai` 2.24.0 API accepts Blob uploads, so the Blob input alone does not explain the failure; the empty provider response did not expose a deeper upstream cause.
+- The P4 branch now bypasses that failing Files hop for the small interview fixtures and sends base64 inline audio directly to the Interactions API. The transcription and reasoning model routing, explicit Process-call boundary, transcript checkpoint, and idempotency rules remain unchanged.
+- The primary retention WAV is about 1.39 MB and is safely within Gemini's documented small-inline-audio path. The app still accepts recordings up to 25 MiB, while Gemini documents a 20 MB total inline request limit; recordings near the app ceiling are therefore not covered by this P4 transport fix.
+- No analyzed synthetic backup call exists yet. Therefore the deployed primary completion criteria and backup-call criterion remain unmet until the corrected branch is hosted and one synthetic retention run succeeds.
+
+### Hardening changes and decisions
+
+- Prevent duplicate display of the same immediate and persisted processing error.
+- Show an accessible playback-failure message on audio player errors.
+- Classify a 404 from the Gemini file-upload stage as a provider failure instead of a missing model, and give provider failures a useful retry instruction.
+- Hide raw `GEMINI_API_KEY` configuration wording from user-facing processing errors; direct the presenter to an administrator.
+- Stale `PROCESSING` recovery was not needed. The live call left `PROCESSING` and reached `NEEDS_REVIEW`; no stale row or interruption risk was observed.
+- Screenshots from the deployed browser timed out twice, so desktop visual and mobile-width visual certification were not completed. Accessibility state confirmed the deployed upload, customer selection, reset, call, and Process controls.
+
+### Demo material, validation, and remaining limitations
+
+- Scenario scripts and expected classifications: `demo/scenarios.md`.
+- Synthetic recordings: `demo/recordings/retention-risk.wav`, `demo/recordings/termite-lead.wav`, and `demo/recordings/mosquito-upsell.wav`.
+- Interview walkthrough and backup instructions: `docs/INTERVIEW_DEMO_RUNBOOK.md`. The runbook explicitly flags that a saved analyzed backup is not currently available.
+- Post-fix branch validation: `npm test` — 53 passed, 0 failed; `npm run lint` — passed; `npm run build` — passed. This was run once on Node 22 in a temporary branch-only GitHub Actions workflow after the inline-audio correction; the temporary workflow was then removed.
+- No migrations were created or applied. `supabase db push` was not run.
+- Remaining acceptance blocker: the corrected P4 branch has not been hosted yet. The existing Render service tracks `main`, auto-deploys main commits, and has pull-request previews disabled. It therefore still serves `4101edc` and cannot prove the corrected retention path before merge through the current service configuration.
+- Do not merge P4 solely on unit/build validation. The required hosted retention run still needs to persist transcript + analysis, produce the deterministic retention proposal, complete approval/execution, leave Jordan `AT_RISK`, survive refresh without reprocessing, and provide the analyzed backup call.
+- P4 code changes remain on the P4 branch. Do not create another Render service merely to bypass this verification constraint.
