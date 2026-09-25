@@ -521,9 +521,13 @@ These were the next-phase instructions at the P3 handoff. P4 execution results a
 
 ## 16. P4 — Demo Hardening and Interview Readiness
 
-P4 branch: `codex/p4-demo-hardening`
+P4 was merged through PR #4, `P4: Demo hardening and interview readiness`.
 
-Exact P4 baseline: `4101edce5901f16a2ee6185ef2e268462cb0e5d0`
+P4 baseline: `4101edce5901f16a2ee6185ef2e268462cb0e5d0`
+
+P4 merge SHA: `d978a8ca7921e46e18437aa5ad2434dd644560e2`
+
+After the merge, `AGENTS.md` was also updated to prefer one bounded real local provider smoke test when credentials are already available and to avoid making temporary PR deployments a default merge prerequisite.
 
 ### Deployed state verified
 
@@ -542,7 +546,7 @@ Exact P4 baseline: `4101edce5901f16a2ee6185ef2e268462cb0e5d0`
 - Provider investigation isolated the failure to the Gemini Files transport: the upload endpoint returned HTTP 404 before either configured model was invoked. The installed `@google/genai` 2.24.0 API accepts Blob uploads, so the Blob input alone does not explain the failure; the empty provider response did not expose a deeper upstream cause.
 - The P4 branch now bypasses that failing Files hop for the small interview fixtures and sends base64 inline audio directly to the Interactions API. The transcription and reasoning model routing, explicit Process-call boundary, transcript checkpoint, and idempotency rules remain unchanged.
 - The primary retention WAV is about 1.39 MB and is safely within Gemini's documented small-inline-audio path. The app still accepts recordings up to 25 MiB, while Gemini documents a 20 MB total inline request limit; recordings near the app ceiling are therefore not covered by this P4 transport fix.
-- No analyzed synthetic backup call exists yet. Therefore the deployed primary completion criteria and backup-call criterion remain unmet until the corrected branch is hosted and one synthetic retention run succeeds.
+- No analyzed synthetic backup call existed at merge time. The corrected provider path was merged so the existing main-tracking Render service could deploy it directly; post-merge hosted verification remains the next check rather than a pre-merge blocker.
 
 ### Hardening changes and decisions
 
@@ -560,6 +564,7 @@ Exact P4 baseline: `4101edce5901f16a2ee6185ef2e268462cb0e5d0`
 - Interview walkthrough and backup instructions: `docs/INTERVIEW_DEMO_RUNBOOK.md`. The runbook explicitly flags that a saved analyzed backup is not currently available.
 - Post-fix branch validation: `npm test` — 53 passed, 0 failed; `npm run lint` — passed; `npm run build` — passed. This was run once on Node 22 in a temporary branch-only GitHub Actions workflow after the inline-audio correction; the temporary workflow was then removed.
 - No migrations were created or applied. `supabase db push` was not run.
-- Remaining acceptance blocker: the corrected P4 branch has not been hosted yet. The existing Render service tracks `main`, auto-deploys main commits, and has pull-request previews disabled. It therefore still serves `4101edc` and cannot prove the corrected retention path before merge through the current service configuration.
-- Do not merge P4 solely on unit/build validation. The required hosted retention run still needs to persist transcript + analysis, produce the deterministic retention proposal, complete approval/execution, leave Jordan `AT_RISK`, survive refresh without reprocessing, and provide the analyzed backup call.
-- P4 code changes remain on the P4 branch. Do not create another Render service merely to bypass this verification constraint.
+- PR #4 was merged with exact-head protection after the user explicitly chose merge-first/post-deploy verification instead of creating a temporary branch deployment.
+- The existing Render service tracks `main` and auto-deploys main commits. Use that normal deployment for the remaining hosted retention verification; do not create another Render service.
+- The remaining verification target is unchanged: persist transcript + analysis, produce the deterministic retention proposal, complete approval/execution, leave Jordan `AT_RISK`, survive refresh without reprocessing, and preserve the analyzed call as the interview backup.
+- If the real environment exposes a provider problem after merge, fix it as a small bounded hotfix rather than reopening broad P4 scope.
