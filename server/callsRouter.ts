@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import express, { type ErrorRequestHandler } from "express";
 import multer from "multer";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { AgentActionRowSchema, DemoCustomerSchema, type AgentActionRow, type DemoCustomer } from "../src/shared/actions.js";
+import { AgentActionRowSchema, DemoCustomerSchema, type AgentActionRow, type CallActionPolicyState, type DemoCustomer } from "../src/shared/actions.js";
 import {
   analysisEvidenceIsGrounded,
   CallAnalysisSchema,
@@ -15,6 +15,7 @@ import {
 } from "../src/shared/calls.js";
 import { MAX_AUDIO_UPLOAD_BYTES } from "../src/shared/calls.js";
 import { AiConfigurationError, isRecoverableAiError, RecoverableAiError, type CallsAiService } from "./aiTypes.js";
+import { deriveCallActionPolicyState } from "./actionPolicy.js";
 import { formatMaxUploadSize, validateAudioUpload } from "./audioValidation.js";
 
 const CALL_SUMMARY_COLUMNS =
@@ -29,6 +30,7 @@ type CallDetailPayload = {
   analysis: CallAnalysisRow | null;
   demoCustomer: DemoCustomer | null;
   actions: AgentActionRow[];
+  actionPolicyState: CallActionPolicyState;
 };
 
 type RouterLogger = Pick<Console, "error"> & Partial<Pick<Console, "info" | "warn">>;
@@ -577,15 +579,25 @@ async function loadCallDetail(
       logger.error("Linked demo customer failed runtime validation.");
       return null;
     }
+    const demoCustomer = parsedCustomer?.success ? parsedCustomer.data : null;
+    const analysisIsGrounded = Boolean(
+      transcript && analysis && analysisEvidenceIsGrounded(analysis.analysis_json, transcript.text),
+    );
+    const validatedAnalysis =
+      transcript && analysis && !analysisIsGrounded
+        ? null
+        : analysis;
     return {
       call,
       transcript,
-      demoCustomer: parsedCustomer?.success ? parsedCustomer.data : null,
+      demoCustomer,
       actions,
-      analysis:
-        transcript && analysis && !analysisEvidenceIsGrounded(analysis.analysis_json, transcript.text)
-          ? null
-          : analysis,
+      analysis: validatedAnalysis,
+      actionPolicyState: deriveCallActionPolicyState(
+        analysisIsGrounded ? analysis?.analysis_json ?? null : null,
+        demoCustomer,
+        actions,
+      ),
     };
   } catch (error) {
     logger.error("Persisted call intelligence request failed.", error);

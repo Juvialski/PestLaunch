@@ -3,6 +3,8 @@ import {
   AgentActionPayloadSchema,
   DEMO_CUSTOMER_IDS,
   type AgentActionPayload,
+  type AgentActionRow,
+  type CallActionPolicyState,
   type DemoCustomer,
 } from "../src/shared/actions.js";
 
@@ -75,6 +77,27 @@ export function proposeDeterministicAction(
   }
 
   return null;
+}
+
+export function deriveCallActionPolicyState(
+  analysis: CallAnalysis | null,
+  customer: DemoCustomer | null,
+  actions: readonly AgentActionRow[],
+): CallActionPolicyState {
+  const savedAction = actions.at(-1);
+  if (savedAction) {
+    switch (savedAction.status) {
+      case "PENDING": return "PENDING_ACTION";
+      case "APPROVED": return "APPROVED_ACTION";
+      case "EXECUTING": return "EXECUTING_ACTION";
+      case "COMPLETED": return "COMPLETED_ACTION";
+      case "REJECTED": return "REJECTED_ACTION";
+      case "FAILED": return "FAILED_ACTION";
+    }
+  }
+
+  if (!analysis) return "NOT_READY";
+  return proposeDeterministicAction(analysis, customer) ? "ACTION_AVAILABLE" : "NO_ACTION_REQUIRED";
 }
 
 function buildProposal(

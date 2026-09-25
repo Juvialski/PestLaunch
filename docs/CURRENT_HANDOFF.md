@@ -29,9 +29,11 @@ Repository:
 
 `Juvialski/PestLaunch`
 
-Current live `main` after the P3 merge and handoff reconciliation:
+Current live `main` at the start of UI-R3:
 
-`c656f2d7b3730aabc34dd23c51b5d5b983f22c8b`
+`08f1b64db5f0aee5d0dd83709c25c40b9e980d4d`
+
+P1 through P4, UI-R1, and UI-R2 are merged. UI-R2 was delivered as PR #7, `UI-R2: Deployed visual QA and realistic-call polish`. The UI-R3 branch was created from this live main; see section 20 for its design and verification.
 
 P3 itself was merged as:
 
@@ -41,7 +43,7 @@ P1, P2, and P3 are merged. P2 was delivered as PR #2, `P2: Gemini transcription 
 
 P3 was delivered as PR #3, `P3: Deterministic actions and human approval`, from `codex/p3-deterministic-actions`. P3 head was `d927bbae93a24b3b51c4f6c1e8a6023a87379734`, and the merged P3 main is `819f71a0750fe123868be37e00d56c96b6508742`. It completes deterministic action proposals, human decisions, fixed synthetic demo mutations, and persisted call activity without a new database migration or Gemini calls in P3.
 
-Open PRs at this handoff: none.
+The earlier P3 handoff had no open PRs. See the latest phase section below for current UI-R3 delivery status.
 
 P1 was merged as:
 
@@ -670,3 +672,29 @@ After the merge, `AGENTS.md` was also updated to prefer one bounded real local p
 - `npm run build` — passed, including type checks and Vite production build.
 - Inspected the built static UI locally at 1366×768. The local checkout has no `SUPABASE_URL`, so its API-backed recent-call data could not be loaded in that preview; the data-backed visual review was completed against the live deployment instead.
 - A full transcript naturally pushes the timeline below the first mobile viewport. The no-action panel also leaves the `Generate action proposal` control available after the policy reports that no action applies; repeating that check does not create an action.
+
+## 20. UI-R3 — No-action outcome and compact copy — 2026-09-25
+
+### Design decision
+
+- Call-detail responses now include a derived `actionPolicyState`. The field is also present in the call-detail payload returned after processing. No new database state or migration was added.
+- `server/actionPolicy.ts` resolves saved action history first. With no saved action, it calls the existing deterministic policy only when the persisted analysis is valid and its evidence is grounded in the saved transcript; the validated linked customer is supplied to the same policy function.
+- States are `NOT_READY`, `ACTION_AVAILABLE`, `PENDING_ACTION`, `APPROVED_ACTION`, `EXECUTING_ACTION`, `COMPLETED_ACTION`, `REJECTED_ACTION`, `FAILED_ACTION`, and `NO_ACTION_REQUIRED`.
+- The proposal control appears only for `ACTION_AVAILABLE`. A `NO_PERMITTED_ACTION` result updates the current UI immediately; reopening the call derives the same state from saved analysis, transcript, customer, and action history.
+- A pending action marks Human review active. Saved decisions complete Human review. A no-action result marks Human review as not required and Outcome complete.
+- The no-action panel says “No follow-up action required” and explains the resolved case or lack of a permitted follow-up. Empty customer-state copy is omitted when there is no linked customer and no saved action.
+- The app header now keeps the PestLaunch brand and Call Intelligence title while dropping the repeated product caption, workspace eyebrow, and tagline. Approval, action effect, and audit-history copy remain.
+
+### Validation
+
+- `npm test` — 61 passed, 0 failed.
+- `npm run lint` — passed.
+- `npm run build` — passed, including type checks and Vite production build.
+- No database migration was created and `supabase db push` was not run. The walkthrough still uses the same calls and approval path, so the runbook was not changed.
+
+### Browser verification
+
+- Inspected the local UI in Codex's browser using the two existing hosted calls through a temporary GET-only preview proxy. The local workspace has no Supabase credentials; the preview derived policy state with the UI-R3 server policy code. The proxy rejected non-GET requests and was removed afterward.
+- `21621eaa-0215-4d5f-88c6-c79977e4fd3b` showed BOOKING, 95% confidence, LOW priority, and RESOLVED. The UI showed “No follow-up action required,” Human review “Not required,” and a completed Outcome step, with no proposal CTA or unrelated empty customer-state message.
+- `53d0f8b5-e520-42fb-9c0a-a64fa1212cdd` retained its completed retention follow-up, approval and execution history, AT_RISK customer state, and completed workflow steps.
+- Neither call was reprocessed or approved. This verifies the local UI against current persisted hosted records; no UI-R3 Render deployment was performed. Mobile browser verification remains outstanding.

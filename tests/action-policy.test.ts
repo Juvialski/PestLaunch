@@ -1,12 +1,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { CallAnalysis } from "../src/shared/calls.js";
-import { AgentActionPayloadSchema, type DemoCustomer } from "../src/shared/actions.js";
-import { proposeDeterministicAction } from "../server/actionPolicy.js";
+import {
+  AgentActionPayloadSchema,
+  AgentActionRowSchema,
+  type AgentActionStatus,
+  type DemoCustomer,
+} from "../src/shared/actions.js";
+import { deriveCallActionPolicyState, proposeDeterministicAction } from "../server/actionPolicy.js";
 
 const RETENTION_CUSTOMER_ID = "a1000000-0000-4000-8000-000000000001";
 const TERMITE_LEAD_ID = "a1000000-0000-4000-8000-000000000002";
 const UPSELL_CUSTOMER_ID = "a1000000-0000-4000-8000-000000000003";
+const CALL_ID = "3dd5d1a6-8118-43e4-b340-206825622cff";
+const NOW = "2026-09-25T00:00:00.000Z";
 
 function analysis(overrides: Partial<CallAnalysis> = {}): CallAnalysis {
   return {
@@ -43,6 +50,29 @@ function demoCustomer(id: string, customerType: string): DemoCustomer {
     created_at: "2026-09-25T00:00:00.000Z",
     updated_at: "2026-09-25T00:00:00.000Z",
   };
+}
+
+function savedAction(status: AgentActionStatus) {
+  const customer = demoCustomer(RETENTION_CUSTOMER_ID, "EXISTING_CUSTOMER");
+  const payload = proposeDeterministicAction(analysis({ callType: "CANCELLATION" }), customer);
+  assert.ok(payload);
+  const payloadJson = status === "REJECTED"
+    ? { ...payload, rejection: { rejectedAt: NOW } }
+    : status === "COMPLETED"
+      ? { ...payload, execution: { startedAt: NOW, completedAt: NOW, result: "Retention follow-up created." } }
+      : payload;
+  return AgentActionRowSchema.parse({
+    id: "a2000000-0000-4000-8000-000000000001",
+    call_id: CALL_ID,
+    action_type: payload.actionType,
+    payload_json: payloadJson,
+    status,
+    requires_approval: true,
+    error_message: null,
+    created_at: NOW,
+    approved_at: status === "COMPLETED" ? NOW : null,
+    executed_at: status === "COMPLETED" ? NOW : null,
+  });
 }
 
 test("cancellation risk wins policy precedence and cannot be overridden by the model action name", () => {
@@ -162,6 +192,29 @@ test("upsell signal proposes the allowlisted task", () => {
 
 test("irrelevant analysis returns no executable action", () => {
   assert.equal(proposeDeterministicAction(analysis()), null);
+});
+
+test("derived policy state distinguishes an available action from a completed no-action result", () => {
+  const eligible = analysis({ callType: "CANCELLATION" });
+  const resolvedBooking = analysis({
+    callType: "BOOKING",
+    outcome: "RESOLVED",
+    priority: "LOW",
+    signals: { ...analysis().signals, newLead: true },
+  });
+
+  assert.equal(deriveCallActionPolicyState(eligible, demoCustomer(RETENTION_CUSTOMER_ID, "EXISTING_CUSTOMER"), []), "ACTION_AVAILABLE");
+  assert.equal(deriveCallActionPolicyState(resolvedBooking, null, []), "NO_ACTION_REQUIRED");
+  assert.equal(deriveCallActionPolicyState(null, null, []), "NOT_READY");
+});
+
+test("derived policy state preserves the persisted pending, completed, and rejected action lifecycle", () => {
+  const eligible = analysis({ callType: "CANCELLATION" });
+  const customer = demoCustomer(RETENTION_CUSTOMER_ID, "EXISTING_CUSTOMER");
+
+  assert.equal(deriveCallActionPolicyState(eligible, customer, [savedAction("PENDING")]), "PENDING_ACTION");
+  assert.equal(deriveCallActionPolicyState(eligible, customer, [savedAction("COMPLETED")]), "COMPLETED_ACTION");
+  assert.equal(deriveCallActionPolicyState(eligible, customer, [savedAction("REJECTED")]), "REJECTED_ACTION");
 });
 
 test("action payload schema rejects arbitrary action names, patches, and approval bypasses", () => {

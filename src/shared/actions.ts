@@ -11,6 +11,20 @@ export const AGENT_ACTION_TYPES = [
 
 export const AGENT_ACTION_STATUSES = ["PENDING", "APPROVED", "REJECTED", "EXECUTING", "COMPLETED", "FAILED"] as const;
 
+export const CALL_ACTION_POLICY_STATES = [
+  "NOT_READY",
+  "ACTION_AVAILABLE",
+  "PENDING_ACTION",
+  "APPROVED_ACTION",
+  "EXECUTING_ACTION",
+  "COMPLETED_ACTION",
+  "REJECTED_ACTION",
+  "FAILED_ACTION",
+  "NO_ACTION_REQUIRED",
+] as const;
+
+export const CallActionPolicyStateSchema = z.enum(CALL_ACTION_POLICY_STATES);
+
 export const DEMO_CUSTOMER_IDS = {
   retention: "a1000000-0000-4000-8000-000000000001",
   termiteLead: "a1000000-0000-4000-8000-000000000002",
@@ -183,5 +197,6 @@ export type AgentActionPayload = z.infer<typeof AgentActionPayloadSchema>;
 export type AgentActionRow = z.infer<typeof AgentActionRowSchema>;
 export type DemoCustomer = z.infer<typeof DemoCustomerSchema>;
 export type DemoCustomerSeed = z.infer<typeof DemoCustomerSeedSchema>;
+export type CallActionPolicyState = z.infer<typeof CallActionPolicyStateSchema>;
 
 export const MAX_ACTION_EXECUTION_ATTEMPTS = 3;
