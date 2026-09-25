@@ -698,3 +698,21 @@ After the merge, `AGENTS.md` was also updated to prefer one bounded real local p
 - `21621eaa-0215-4d5f-88c6-c79977e4fd3b` showed BOOKING, 95% confidence, LOW priority, and RESOLVED. The UI showed “No follow-up action required,” Human review “Not required,” and a completed Outcome step, with no proposal CTA or unrelated empty customer-state message.
 - `53d0f8b5-e520-42fb-9c0a-a64fa1212cdd` retained its completed retention follow-up, approval and execution history, AT_RISK customer state, and completed workflow steps.
 - Neither call was reprocessed or approved. This verifies the local UI against current persisted hosted records; no UI-R3 Render deployment was performed. Mobile browser verification remains outstanding.
+
+## 21. UI-R4 — Source transcript and manual review — 2026-09-25
+
+### Scope and design
+
+- Starting `origin/main`: `856cd2b8c68a0a31880201aa3136210df1b5b720`.
+- Kept the existing PestLaunch brand and compact Recent calls inbox. Removed repeated workflow captions, the five-step progress strip, model/provider callouts, and the footer tagline so the call review reads as a feature inside PestLaunch.
+- On laptop/desktop widths, the selected-call workspace places the original recording and Source transcript beside AI findings. The transcript preserves speaker labels, supplied timestamps, and text; the recording remains directly above it.
+- AI summary, sentiment, outcome, and signals remain separate from Evidence from transcript and the deterministic Follow-up decision. Evidence quotes show their speaker. A small Compare with source transcript link returns to the transcript; no timestamp matching or fuzzy jump behavior was added.
+- Small screens stack the source column before AI findings. The inbox remains compact and receives no transcript preview.
+
+### Behavior and validation
+
+- Frontend-only. Gemini routing and prompts, API behavior, schemas, action policy, approval rules, customer mutations, and persistence are unchanged.
+- Browser review used the persisted booking/no-action call `21621eaa-0215-4d5f-88c6-c79977e4fd3b` and completed retention call `53d0f8b5-e520-42fb-9c0a-a64fa1212cdd`. Neither call was reprocessed or approved.
+- Gemini calls: 0. Database migration: none. `supabase db push`: not run. Jev: not integrated.
+- Local in-app browser rendering at approximately 1290×910 showed the source/AI columns without horizontal overflow. The browser exposes no viewport override, so exact 1440×900, 1366×768, and mobile screenshot checks could not be performed; the responsive stack is configured below 1080px.
+- `npm test` — 58 passed, 0 failed. `npm run lint` — passed. `npm run build` — passed, including type checks and Vite production build.

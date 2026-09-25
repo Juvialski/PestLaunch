@@ -8,9 +8,9 @@ import type {
 } from "./shared/calls.js";
 import type { AgentActionRow, CallActionPolicyState, DemoCustomer } from "./shared/actions.js";
 import { buildCallTimeline } from "./shared/actionTimeline.js";
-import { buildCallWorkflowSteps, shouldShowProposalAction } from "./shared/callWorkflowProgress.js";
 import { AUDIO_PLAYBACK_ERROR, visibleCallError } from "./shared/callErrorFeedback.js";
 import { MAX_AUDIO_UPLOAD_BYTES } from "./shared/calls.js";
+import { buildSourceTranscriptDisplay, formatSourceSpeaker } from "./shared/sourceTranscript.js";
 
 const ACCEPTED_EXTENSIONS = new Set(["mp3", "wav", "m4a", "webm"]);
 const ACCEPTED_FORMATS = "audio/mpeg,audio/wav,audio/x-wav,audio/mp4,audio/x-m4a,audio/webm,.mp3,.wav,.m4a,.webm";
@@ -560,7 +560,6 @@ export default function App() {
           <aside className="recent-section inbox-column" aria-labelledby="recent-title">
             <div className="section-heading recent-heading">
               <div>
-                <p className="eyebrow">INBOX</p>
                 <h2 id="recent-title">Recent calls</h2>
               </div>
               {callsState === "ready" && <span className="call-count">{calls.length} {calls.length === 1 ? "call" : "calls"}</span>}
@@ -623,25 +622,15 @@ export default function App() {
                 </ul>
               )}
             </div>
-            <p className="inbox-caption">Select a call to follow its path from recording to outcome.</p>
           </aside>
 
-          <section className="detail-section review-column" aria-labelledby="detail-title">
-            <div className="section-heading detail-section-heading">
-              <div>
-                <p className="eyebrow">WORKFLOW REVIEW</p>
-                <h2 id="detail-title">Review a call</h2>
-              </div>
-            </div>
+          <section className="detail-section review-column" aria-label="Call review">
             <div className="call-detail-card">
               {detailState === "idle" ? (
                 <div className="detail-empty">
                   <span className="empty-icon" aria-hidden="true"><AudioIcon /></span>
-                  <strong>Your call story appears here</strong>
-                  <span>Select a recording to review its transcript, AI findings, recommended action, and activity.</span>
-                  <ol className="empty-workflow" aria-label="Call workflow">
-                    <li>Call</li><li>Transcript</li><li>Intelligence</li><li>Approval</li><li>Outcome</li>
-                  </ol>
+                  <strong>Select a call to review</strong>
+                  <span>Its recording, transcript, and findings will appear here.</span>
                 </div>
               ) : detailState === "loading" ? (
                 <div className="list-state"><span className="spinner" aria-hidden="true" /> Loading call detail…</div>
@@ -670,10 +659,6 @@ export default function App() {
           </section>
         </div>
       </main>
-      <footer className="app-footer">
-        <span>PestLaunch Call Intelligence</span>
-        <span>AI proposes · people approve · actions are logged</span>
-      </footer>
     </div>
   );
 }
@@ -717,26 +702,19 @@ function CallDetailWorkspace({
         ["followUpRequired", "Follow-up required"],
       ].filter(([key]) => intelligence.signals[key as keyof typeof intelligence.signals])
     : [];
-  const needsReview = call.status === "NEEDS_REVIEW" || call.status === "FAILED";
-  const workflowSteps = buildCallWorkflowSteps({
-    hasTranscript: Boolean(transcript),
-    hasIntelligence: Boolean(intelligence),
-    isBusy,
-    needsReview,
-    actionPolicyState,
-  });
 
   return (
     <div className="detail-grid">
       <header className="call-overview-header">
         <div>
-          <p className="eyebrow">SELECTED CALL</p>
           <h3 id="recording-title">{callDisplayName}</h3>
           <div className="recording-meta-inline">
             <span title={call.original_filename}>{call.original_filename}</span>
             <span><time dateTime={call.created_at}>{formatDate(call.created_at)}</time></span>
             {call.duration !== null && <span>{formatDuration(call.duration)}</span>}
-            {demoCustomer && <span className="linked-customer-tag">Linked to {demoCustomer.name}</span>}
+            {demoCustomer && call.caller_name?.trim() && call.caller_name.trim() !== demoCustomer.name && (
+              <span className="linked-customer-tag">Linked to {demoCustomer.name}</span>
+            )}
           </div>
         </div>
         <div className="call-header-badges">
@@ -746,269 +724,219 @@ function CallDetailWorkspace({
           {intelligence && <>
             <span className="call-type-pill">{formatStatus(intelligence.callType)}</span>
             <span className={`priority-pill priority-${intelligence.priority.toLowerCase()}`}>{intelligence.priority} priority</span>
-            {intelligence.signals.cancellationRisk && <span className="risk-pill">Cancellation risk</span>}
           </>}
         </div>
       </header>
 
-      <ol className="workflow-progress" aria-label="Call workflow progress">
-        {workflowSteps.map((step, index) => (
-          <li
-            className={`workflow-step${step.complete ? " is-complete" : ""}${step.active ? " is-active" : ""}${step.attention ? " is-attention" : ""}${step.notRequired ? " is-not-required" : ""}`}
-            aria-current={step.active || step.attention ? "step" : undefined}
-            key={step.label}
-          >
-            <span className="workflow-step-index" aria-hidden="true">{step.notRequired ? "—" : step.complete ? "✓" : String(index + 1).padStart(2, "0")}</span>
-            <span className="workflow-step-content">
-              <span className="workflow-step-label">{step.label}</span>
-              {step.notRequired && <span className="workflow-step-state">Not required</span>}
-            </span>
-          </li>
-        ))}
-      </ol>
+      <div className="review-columns">
+        <div className="source-review-column">
+          <section className="detail-panel transcript-panel" id="source-transcript" aria-labelledby="transcript-title">
+            <div className="detail-panel-heading transcript-panel-heading">
+              <div>
+                <h3 id="transcript-title">Source transcript</h3>
+                <p className="transcript-helper">Review the original conversation against the AI findings.</p>
+              </div>
+            </div>
+            <span className="field-label audio-label">Original recording</span>
+            <audio
+              className="call-audio"
+              controls
+              preload="none"
+              src={`/api/calls/${call.id}/audio`}
+              aria-label={`Original recording for ${call.caller_name?.trim() || demoCustomer?.name || call.original_filename}`}
+              onError={() => setAudioPlaybackFailedCallId(call.id)}
+              onPlaying={() => setAudioPlaybackFailedCallId(null)}
+            >
+              Your browser does not support audio playback.
+            </audio>
+            {audioPlaybackFailedCallId === call.id && <p className="process-status is-error" role="alert">{AUDIO_PLAYBACK_ERROR}</p>}
+            {transcript ? (
+              transcript.segments_json.length > 0 ? (
+                <ol className="transcript-segments">
+                  {buildSourceTranscriptDisplay(transcript.segments_json).map((segment, index) => (
+                    <li key={`${segment.speaker}-${index}`}>
+                      <div className="transcript-segment-meta">
+                        <strong>{segment.speaker}</strong>
+                        {segment.timestamp && <time>{segment.timestamp}</time>}
+                      </div>
+                      <p>{segment.text}</p>
+                    </li>
+                  ))}
+                </ol>
+              ) : <p className="transcript-plain">{transcript.text}</p>
+            ) : <p className="detail-muted">The transcript will appear here after processing.</p>}
+          </section>
+        </div>
+        <div className="ai-review-column">
+          <section className="detail-panel intelligence-panel" aria-labelledby="intelligence-title">
+            <div className="intelligence-heading">
+              <div className="detail-panel-heading">
+                <h3 id="intelligence-title">AI findings</h3>
+              </div>
+              {transcript && <a className="compare-source-link" href="#source-transcript">Compare with source transcript</a>}
+            </div>
 
-      <section className="detail-panel intelligence-panel" aria-labelledby="intelligence-title">
-        <div className="intelligence-heading">
-          <div className="detail-panel-heading">
-            <p className="eyebrow">AI ANALYSIS</p>
-            <h3 id="intelligence-title">{intelligence ? "Key findings" : "Call insights"}</h3>
-          </div>
-          {intelligence && (
-            <div className="analysis-badges">
-              <span className="confidence-pill">{Math.round(intelligence.confidence * 100)}% confidence</span>
+            {canProcess && (
+              <button className="primary-button process-button" type="button" onClick={onProcess} disabled={isBusy}>
+                {isBusy ? <><span className="spinner" aria-hidden="true" /> Processing call</> : call.status === "UPLOADED" ? "Process call" : "Retry processing"}
+              </button>
+            )}
+            {isBusy && <p className="process-status" role="status">Processing call…</p>}
+            {processState === "success" && call.status === "ANALYZED" && (
+              <p className="process-status is-success" role="status">Transcript and call intelligence saved.</p>
+            )}
+            {visibleError && <p className={`process-status ${processError ? "is-error" : "is-warning"}`} role={processError ? "alert" : "status"}>{visibleError}</p>}
+
+            {intelligence ? (
+              <>
+                <div className="analysis-summary-block">
+                  <span className="field-label">Call summary</span>
+                  <p>{intelligence.summary}</p>
+                </div>
+                <div className="analysis-inline-fields">
+                  <div><span className="field-label">Sentiment</span><strong>{formatStatus(intelligence.sentiment)}</strong></div>
+                  <div><span className="field-label">Outcome</span><strong>{formatStatus(intelligence.outcome)}</strong></div>
+                </div>
+                <div className="signal-section">
+                  <span className="field-label">Signals</span>
+                  {signals.length > 0 ? (
+                    <ul className="signal-list">
+                      {signals.map(([key, label]) => <li className={`signal-pill signal-${key}`} key={label}>{label}</li>)}
+                    </ul>
+                  ) : <p className="detail-muted">No key signals detected.</p>}
+                </div>
+              </>
+            ) : (
+              <div className="analysis-empty">
+                <strong>{call.status === "PROCESSING" ? "Analysis in progress" : "No validated analysis yet"}</strong>
+                <span>Call type, priority, and supporting evidence appear here after processing.</span>
+              </div>
+            )}
+          </section>
+          <section className="detail-panel evidence-panel" aria-labelledby="evidence-title">
+            <div className="detail-panel-heading">
+              <h3 id="evidence-title">Evidence from transcript</h3>
+            </div>
+            {intelligence ? (
+              <ul className="evidence-list">
+                {intelligence.evidence.map((item, index) => (
+                  <li key={`${item.quote}-${index}`}>
+                    <blockquote>“{item.quote}”</blockquote>
+                    {item.speaker && <span className="evidence-speaker">{formatSourceSpeaker(item.speaker)}</span>}
+                  </li>
+                ))}
+              </ul>
+            ) : <p className="detail-muted">Evidence quotes will appear here alongside validated analysis.</p>}
+          </section>
+          <section className="detail-panel agent-proposal-panel" aria-labelledby="agent-proposal-title">
+            <div className="agent-proposal-heading">
+              <div>
+                <h3 id="agent-proposal-title">Follow-up</h3>
+              </div>
+              <span className="proposal-origin">Deterministic</span>
+            </div>
+            {!intelligence ? (
+              <div className="agent-proposal-empty">
+                <p className="detail-muted">A follow-up proposal can be reviewed after the call has validated intelligence.</p>
+                <span className="approval-boundary">Customer state never changes without human approval.</span>
+              </div>
+            ) : actionPolicyState === "NO_ACTION_REQUIRED" ? (
+              <div className="no-action-outcome" role="status">
+                <h4>No follow-up action required</h4>
+                <p>
+                  {intelligence.outcome === "RESOLVED" && !intelligence.signals.followUpRequired
+                    ? "Resolved during the call. No further action is needed."
+                    : "No follow-up is needed for this call."}
+                </p>
+              </div>
+          ) : actions.length === 0 && actionPolicyState === "ACTION_AVAILABLE" ? (
+              <div className="agent-proposal-empty">
+                <p className="detail-muted">No deterministic proposal is saved for this call yet.</p>
+                <button className="secondary-button" type="button" onClick={onPropose} disabled={isActionBusy}>
+                  {actionRequestState === "proposing" ? <><span className="spinner" aria-hidden="true" /> Creating proposal</> : "Generate action proposal"}
+                </button>
+              </div>
+            ) : actions.length > 0 ? (
+              <div className="agent-action-list">
+                {actions.map((action) => {
+                  const isPending = action.status === "PENDING";
+                  const canResume = action.status === "APPROVED" || action.status === "FAILED";
+                  return (
+                    <article className={`agent-action-card action-${action.status.toLowerCase()}`} key={action.id}>
+                      <div className="agent-action-title-row">
+                        <div>
+                          <span className="field-label">{action.payload_json.priority} priority · {isPending ? "approval required" : action.status === "REJECTED" ? "rejected by reviewer" : "human approved"}</span>
+                          <h4>{action.payload_json.title}</h4>
+                        </div>
+                        <span className={`action-status status-${action.status.toLowerCase().replaceAll("_", "-")}`}>{formatStatus(action.status)}</span>
+                      </div>
+                      <p className="action-reason">{action.payload_json.reason}</p>
+                      {isPending && (
+                        <div className="approval-boundary">
+                          <strong>Review before applying</strong>
+                          <span>No customer or pipeline state changes until you approve this follow-up.</span>
+                        </div>
+                      )}
+                      {action.status !== "COMPLETED" && (
+                        <div className="action-effect">
+                          <span className="field-label">{isPending ? "If approved" : "Expected effect"}</span>
+                          <p>{describeActionEffect(action)}</p>
+                        </div>
+                      )}
+                      {action.status === "REJECTED" && <p className="action-result is-rejected">Rejected. No business state changed.</p>}
+                      {action.status === "COMPLETED" && action.payload_json.execution?.result && (
+                        <div className="action-outcome">
+                          <span className="field-label">Recorded outcome</span>
+                          <p>{action.payload_json.execution.result}</p>
+                        </div>
+                      )}
+                      {action.status === "FAILED" && action.error_message && <p className="action-result is-error" role="alert">{action.error_message}</p>}
+                      {action.status === "EXECUTING" && <p className="action-result">Approved; deterministic execution is in progress.</p>}
+                      {(isPending || canResume) && (
+                        <div className="action-controls">
+                          {isPending && (
+                            <>
+                              <button className="primary-button" type="button" onClick={() => onDecision(action.id, "approve")} disabled={isActionBusy}>
+                                {actionRequestState === "approving" ? <><span className="spinner" aria-hidden="true" /> Approving</> : "Approve follow-up"}
+                              </button>
+                              <button className="secondary-button" type="button" onClick={() => onDecision(action.id, "reject")} disabled={isActionBusy}>
+                                {actionRequestState === "rejecting" ? "Rejecting…" : "Reject"}
+                              </button>
+                            </>
+                          )}
+                          {canResume && (
+                            <button className="primary-button" type="button" onClick={() => onDecision(action.id, "approve")} disabled={isActionBusy}>
+                              {actionRequestState === "approving" ? <><span className="spinner" aria-hidden="true" /> Executing</> : action.status === "FAILED" ? "Retry approved action" : "Continue approved action"}
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </article>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="agent-proposal-empty">
+                <p className="detail-muted">No action decision is available for this call yet.</p>
+              </div>
+            )}
+            {actionRequestError && <p className="action-result is-error" role="alert">{actionRequestError}</p>}
+          {demoCustomer && (
+            <div className="demo-customer-state">
+              <span className="field-label">Customer status</span>
+              <span className={`health-pill health-${(demoCustomer.health_status ?? "unknown").toLowerCase().replaceAll("_", "-")}`}>
+                {formatStatus(demoCustomer.health_status ?? "UNKNOWN")}
+              </span>
             </div>
           )}
+          </section>
         </div>
-
-        {canProcess && (
-          <button className="primary-button process-button" type="button" onClick={onProcess} disabled={isBusy}>
-            {isBusy ? <><span className="spinner" aria-hidden="true" /> Processing call</> : call.status === "UPLOADED" ? "Process call" : "Retry processing"}
-          </button>
-        )}
-        {isBusy && <p className="process-status" role="status">Processing this call. Duplicate processing is disabled.</p>}
-        {processState === "success" && call.status === "ANALYZED" && (
-          <p className="process-status is-success" role="status">Transcript and call intelligence saved.</p>
-        )}
-        {visibleError && <p className={`process-status ${processError ? "is-error" : "is-warning"}`} role={processError ? "alert" : "status"}>{visibleError}</p>}
-
-        {intelligence ? (
-          <>
-            <div className="analysis-summary-block">
-              <span className="field-label">Call summary</span>
-              <p>{intelligence.summary}</p>
-            </div>
-            <div className="analysis-support-grid">
-              <div>
-                <span className="field-label">Customer intent</span>
-                <p>{intelligence.customerIntent}</p>
-              </div>
-              <div className="analysis-inline-fields">
-                <div><span className="field-label">Sentiment</span><strong>{formatStatus(intelligence.sentiment)}</strong></div>
-                <div><span className="field-label">Outcome</span><strong>{formatStatus(intelligence.outcome)}</strong></div>
-              </div>
-            </div>
-            <div className="signal-section">
-              <div className="signal-heading">
-                <span className="field-label">Detected signals</span>
-                {analysis && <span className="model-note">{analysis.model_used}</span>}
-              </div>
-              {signals.length > 0 ? (
-                <ul className="signal-list">
-                  {signals.map(([key, label]) => <li className={`signal-pill signal-${key}`} key={label}>{label}</li>)}
-                </ul>
-              ) : <p className="detail-muted">No key signals detected.</p>}
-            </div>
-            <div className="ai-recommendation">
-              <span className="field-label">Model recommendation · context only</span>
-              {intelligence.recommendedAction ? (
-                <div>
-                  <strong>{formatStatus(intelligence.recommendedAction.type)}</strong>
-                  <p>{intelligence.recommendedAction.reason}</p>
-                </div>
-              ) : <p className="detail-muted">No model recommendation was returned. Application policy still evaluates the validated signals.</p>}
-              <span className="proposal-note">The model provides context; it cannot execute a business action.</span>
-            </div>
-          </>
-        ) : (
-          <div className="analysis-empty">
-            <strong>{call.status === "PROCESSING" ? "Analysis in progress" : "No validated analysis yet"}</strong>
-            <span>Call type, priority, and supporting evidence appear here after processing.</span>
-          </div>
-        )}
-      </section>
-
-      <section className="detail-panel agent-proposal-panel" aria-labelledby="agent-proposal-title">
-        <div className="agent-proposal-heading">
-          <div>
-            <p className="eyebrow">APPLICATION POLICY</p>
-            <h3 id="agent-proposal-title">Recommended action</h3>
-          </div>
-          <span className="proposal-origin">Deterministic</span>
-        </div>
-        {!intelligence ? (
-          <div className="agent-proposal-empty">
-            <p className="detail-muted">A follow-up proposal can be reviewed after the call has validated intelligence.</p>
-            <span className="approval-boundary">Customer state never changes without human approval.</span>
-          </div>
-        ) : actionPolicyState === "NO_ACTION_REQUIRED" ? (
-          <div className="no-action-outcome" role="status">
-            <span className="field-label">Workflow complete</span>
-            <h4>No follow-up action required</h4>
-            <p>
-              {intelligence.outcome === "RESOLVED" && !intelligence.signals.followUpRequired
-                ? "Resolved during the call. Deterministic policy found no follow-up action requiring approval."
-                : "Deterministic policy found no permitted follow-up action for this validated analysis."}
-            </p>
-          </div>
-        ) : actions.length === 0 && shouldShowProposalAction(actionPolicyState) ? (
-          <div className="agent-proposal-empty">
-            <p className="detail-muted">No deterministic proposal is saved for this call yet.</p>
-            <button className="secondary-button" type="button" onClick={onPropose} disabled={isActionBusy}>
-              {actionRequestState === "proposing" ? <><span className="spinner" aria-hidden="true" /> Creating proposal</> : "Generate action proposal"}
-            </button>
-          </div>
-        ) : actions.length > 0 ? (
-          <div className="agent-action-list">
-            {actions.map((action) => {
-              const isPending = action.status === "PENDING";
-              const canResume = action.status === "APPROVED" || action.status === "FAILED";
-              return (
-                <article className={`agent-action-card action-${action.status.toLowerCase()}`} key={action.id}>
-                  <div className="agent-action-title-row">
-                    <div>
-                      <span className="field-label">{action.payload_json.priority} priority · {isPending ? "approval required" : action.status === "REJECTED" ? "rejected by reviewer" : "human approved"}</span>
-                      <h4>{action.payload_json.title}</h4>
-                    </div>
-                    <span className={`action-status status-${action.status.toLowerCase().replaceAll("_", "-")}`}>{formatStatus(action.status)}</span>
-                  </div>
-                  <p className="action-reason">{action.payload_json.reason}</p>
-                  {isPending && (
-                    <div className="approval-boundary">
-                      <strong>Review before applying</strong>
-                      <span>No customer or pipeline state changes until you approve this follow-up.</span>
-                    </div>
-                  )}
-                  {action.status !== "COMPLETED" && (
-                    <div className="action-effect">
-                      <span className="field-label">{isPending ? "If approved" : "Expected effect"}</span>
-                      <p>{describeActionEffect(action)}</p>
-                    </div>
-                  )}
-                  {action.status === "REJECTED" && <p className="action-result is-rejected">Rejected. No business state changed.</p>}
-                  {action.status === "COMPLETED" && action.payload_json.execution?.result && (
-                    <div className="action-outcome">
-                      <span className="field-label">Recorded outcome</span>
-                      <p>{action.payload_json.execution.result}</p>
-                    </div>
-                  )}
-                  {action.status === "FAILED" && action.error_message && <p className="action-result is-error" role="alert">{action.error_message}</p>}
-                  {action.status === "EXECUTING" && <p className="action-result">Approved; deterministic execution is in progress.</p>}
-                  {(isPending || canResume) && (
-                    <div className="action-controls">
-                      {isPending && (
-                        <>
-                          <button className="primary-button" type="button" onClick={() => onDecision(action.id, "approve")} disabled={isActionBusy}>
-                            {actionRequestState === "approving" ? <><span className="spinner" aria-hidden="true" /> Approving</> : "Approve follow-up"}
-                          </button>
-                          <button className="secondary-button" type="button" onClick={() => onDecision(action.id, "reject")} disabled={isActionBusy}>
-                            {actionRequestState === "rejecting" ? "Rejecting…" : "Reject"}
-                          </button>
-                        </>
-                      )}
-                      {canResume && (
-                        <button className="primary-button" type="button" onClick={() => onDecision(action.id, "approve")} disabled={isActionBusy}>
-                          {actionRequestState === "approving" ? <><span className="spinner" aria-hidden="true" /> Executing</> : action.status === "FAILED" ? "Retry approved action" : "Continue approved action"}
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </article>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="agent-proposal-empty">
-            <p className="detail-muted">No action decision is available for this call yet.</p>
-          </div>
-        )}
-        {actionRequestError && <p className="action-result is-error" role="alert">{actionRequestError}</p>}
-        {(demoCustomer || actions.length > 0) && (
-          <div className="demo-customer-state">
-            <div className="customer-state-heading">
-              <span className="field-label">Current customer state</span>
-              {demoCustomer && <span className={`health-pill health-${(demoCustomer.health_status ?? "unknown").toLowerCase().replaceAll("_", "-")}`}>{formatStatus(demoCustomer.health_status ?? "UNKNOWN")}</span>}
-            </div>
-            {demoCustomer ? (
-              <>
-                <strong>{demoCustomer.name}</strong>
-                <span>Pipeline · {formatStatus(demoCustomer.pipeline_stage ?? "UNKNOWN")}</span>
-              </>
-            ) : <p className="detail-muted">No linked demo customer. Approved follow-ups still appear as completed action tasks.</p>}
-          </div>
-        )}
-      </section>
-
-      <section className="detail-panel transcript-panel" aria-labelledby="transcript-title">
-        <div className="detail-panel-heading transcript-panel-heading">
-          <div>
-            <p className="eyebrow">SOURCE RECORDING</p>
-            <h3 id="transcript-title">Transcript</h3>
-          </div>
-          {transcript && <span className="model-note">{transcript.model_used}</span>}
-        </div>
-        <audio
-          className="call-audio"
-          controls
-          preload="none"
-          src={`/api/calls/${call.id}/audio`}
-          aria-label={`Recording for ${call.caller_name?.trim() || demoCustomer?.name || call.original_filename}`}
-          onError={() => setAudioPlaybackFailedCallId(call.id)}
-          onPlaying={() => setAudioPlaybackFailedCallId(null)}
-        >
-          Your browser does not support audio playback.
-        </audio>
-        {audioPlaybackFailedCallId === call.id && <p className="process-status is-error" role="alert">{AUDIO_PLAYBACK_ERROR}</p>}
-        {transcript ? (
-          transcript.segments_json.length > 0 ? (
-            <ol className="transcript-segments">
-              {transcript.segments_json.map((segment, index) => (
-                <li key={`${segment.speaker}-${segment.startMs ?? index}-${index}`}>
-                  <div className="transcript-segment-meta">
-                    <strong>{formatSpeakerLabel(segment.speaker)}</strong>
-                    {(segment.startMs !== undefined || segment.endMs !== undefined) && <time>{formatSegmentTime(segment.startMs, segment.endMs)}</time>}
-                  </div>
-                  <p>{segment.text}</p>
-                </li>
-              ))}
-            </ol>
-          ) : <p className="transcript-plain">{transcript.text}</p>
-        ) : <p className="detail-muted">The transcript will appear here after processing.</p>}
-      </section>
-
-      <section className="detail-panel evidence-panel" aria-labelledby="evidence-title">
-        <div className="detail-panel-heading">
-          <p className="eyebrow">WHY IT WAS FLAGGED</p>
-          <h3 id="evidence-title">Transcript evidence</h3>
-        </div>
-        {intelligence ? (
-          <ul className="evidence-list">
-            {intelligence.evidence.map((item, index) => (
-              <li key={`${item.quote}-${index}`}>
-                <blockquote>“{item.quote}”</blockquote>
-                {item.speaker && <span>{formatSpeakerLabel(item.speaker)}</span>}
-              </li>
-            ))}
-          </ul>
-        ) : <p className="detail-muted">Evidence quotes will appear here alongside validated analysis.</p>}
-      </section>
-
+      </div>
       <section className="detail-panel timeline-panel" aria-labelledby="activity-title">
         <div className="timeline-heading">
           <div className="detail-panel-heading">
-            <p className="eyebrow">PERSISTED ACTIVITY</p>
             <h3 id="activity-title">Activity timeline</h3>
           </div>
-          <span className="timeline-caption">A record of what happened to this call</span>
         </div>
         <ol className="activity-timeline">
           {timeline.map((event, index) => (
@@ -1026,11 +954,6 @@ function CallDetailWorkspace({
     </div>
   );
 }
-function formatSpeakerLabel(speaker: string): string {
-  const speakerNumber = /^spk:(\d+)$/i.exec(speaker.trim());
-  return speakerNumber ? `Speaker ${Number(speakerNumber[1]) + 1}` : speaker;
-}
-
 function formatDate(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
@@ -1048,16 +971,6 @@ function describeActionEffect(action: AgentActionRow): string {
     return "If approved, the linked synthetic termite lead may move from NEW to QUALIFIED.";
   }
   return "If approved, this completed action record represents the created follow-up task; no customer fields are changed.";
-}
-
-function formatSegmentTime(startMs?: number, endMs?: number): string {
-  const format = (value: number) => {
-    const totalSeconds = Math.floor(value / 1_000);
-    return `${Math.floor(totalSeconds / 60)}:${String(totalSeconds % 60).padStart(2, "0")}`;
-  };
-  if (startMs === undefined) return endMs === undefined ? "" : format(endMs);
-  if (endMs === undefined) return format(startMs);
-  return `${format(startMs)}–${format(endMs)}`;
 }
 
 function formatDuration(seconds: number): string {
