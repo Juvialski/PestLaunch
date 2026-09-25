@@ -9,6 +9,7 @@ import type { CallsAiService } from "../server/aiTypes.js";
 const unusedAi: CallsAiService = {
   async transcribe() { throw new Error("Audio ingestion tests must not transcribe."); },
   async analyze() { throw new Error("Audio ingestion tests must not analyze."); },
+  async draftCustomerCommunication() { throw new Error("Audio ingestion tests must not draft customer communication."); },
 };
 
 type FakeCall = {

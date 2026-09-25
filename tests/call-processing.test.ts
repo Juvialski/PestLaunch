@@ -152,6 +152,7 @@ function createAiDouble(options: {
         attemptCount: 1,
       };
     },
+    async draftCustomerCommunication() { throw new Error("Call processing must not draft customer communication."); },
   };
   return { ai, calls };
 }
@@ -613,6 +614,7 @@ test("already-processing and simultaneous duplicate requests do not start a seco
       aiCalls.analyze += 1;
       return { analysis: analysis(), modelUsed: "gemini-3.8-flash", attemptCount: 1 };
     },
+    async draftCustomerCommunication() { throw new Error("Call processing must not draft customer communication."); },
   };
   const app = createTestApp(memory.supabase, ai);
 

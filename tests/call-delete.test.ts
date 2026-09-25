@@ -69,6 +69,7 @@ function createDeleteFixture(status: CallStatus) {
   const ai: CallsAiService = {
     async transcribe() { throw new Error("delete must not invoke transcription"); },
     async analyze() { throw new Error("delete must not invoke analysis"); },
+    async draftCustomerCommunication() { throw new Error("delete must not draft customer communication"); },
   };
   const app = express();
   app.use("/api/calls", createCallsRouter({ supabase, bucketName: "call-recordings", ai }));
