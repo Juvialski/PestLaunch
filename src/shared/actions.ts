@@ -125,10 +125,10 @@ export const AgentActionPayloadSchema = z
   })
   .strict()
   .superRefine((payload, context) => {
-    if (payload.customerCommunication && payload.actionType !== "CREATE_RETENTION_FOLLOWUP") {
+    if (payload.customerCommunication && payload.actionType === "CREATE_COLLECTIONS_FOLLOWUP") {
       context.addIssue({
         code: "custom",
-        message: "Customer communication drafts are only supported for retention follow-ups.",
+        message: "Customer communication drafts are not enabled for collections follow-ups.",
         path: ["customerCommunication"],
       });
     }
