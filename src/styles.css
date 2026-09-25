@@ -279,7 +279,10 @@ h3 { margin: 0; font-size: 17px; line-height: 1.3; font-weight: 720; }
 .processing-attention-recording, .processing-attention-message { min-width: 0; display: flex; align-items: flex-start; gap: 8px; }
 .processing-attention-icon { color: #a34f43; border-color: #efd9d1; background: #fff0eb; font-size: 12px; }
 .processing-attention-message strong { color: #8f443a; }
+.processing-attention-actions { display: flex; align-items: center; justify-content: end; gap: 7px; }
 .processing-retry-button { min-height: 36px; white-space: nowrap; }
+.delete-call-button { min-height: 36px; color: #9a4a3f; border-color: #ead7d2; background: #fff; white-space: nowrap; }
+.delete-call-button:hover:not(:disabled) { color: #873f36; border-color: #dcbdb6; background: #fff7f4; }
 .processing-poll-notice { grid-column: 1 / -1; padding-top: 8px; display: flex; align-items: center; justify-content: space-between; gap: 10px; border-top: 1px solid #e7ebe5; }
 .processing-poll-notice span { color: #6f7060; font-size: 10px; line-height: 1.45; }
 .processing-poll-notice .secondary-button { min-height: 34px; white-space: nowrap; }
@@ -419,7 +422,8 @@ h3 { margin: 0; font-size: 17px; line-height: 1.3; font-weight: 720; }
   .timeline-heading { align-items: start; flex-direction: column; gap: 3px; }
   .processing-stages { grid-template-columns: 1fr; gap: 9px; }
   .processing-progress-attention { grid-template-columns: 1fr; align-items: start; }
-  .processing-retry-button { width: 100%; }
+  .processing-attention-actions { width: 100%; align-items: stretch; flex-direction: column; }
+  .processing-retry-button, .delete-call-button { width: 100%; }
   .processing-poll-notice { align-items: stretch; flex-direction: column; }
   .processing-poll-notice .secondary-button { width: 100%; }
   .activity-timeline li > div { grid-template-columns: 1fr; gap: 0; }

@@ -118,6 +118,7 @@ export default function App() {
   const [pollingStatusMessage, setPollingStatusMessage] = useState<string | null>(null);
   const [actionRequestState, setActionRequestState] = useState<ActionRequestState>("idle");
   const [actionRequestError, setActionRequestError] = useState<string | null>(null);
+  const [deletingCallId, setDeletingCallId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const detailRequestRef = useRef(0);
   const callsRequestRef = useRef(0);
@@ -282,6 +283,40 @@ export default function App() {
     setPollingStatusMessage(null);
     setActionRequestError(null);
     void loadCallDetail(callId);
+  };
+
+  const handleDeleteCall = async (call: CallRecord) => {
+    if ((call.status !== "FAILED" && call.status !== "NEEDS_REVIEW") || deletingCallId === call.id) return;
+    const confirmed = window.confirm("Delete this failed attempt? Its saved recording and processing data will be removed.");
+    if (!confirmed) return;
+
+    setDeletingCallId(call.id);
+    setProcessError(null);
+    try {
+      const response = await fetch(`/api/calls/${call.id}`, { method: "DELETE" });
+      if (!response.ok) {
+        const payload = (await response.json()) as ApiPayload;
+        throw new Error(payload.error?.message ?? "The failed attempt could not be deleted.");
+      }
+
+      const activePoll = processingPollRef.current;
+      if (activePoll?.callId === call.id) activePoll.controller.abort();
+      advanceSelectionGeneration();
+      selectedCallIdRef.current = null;
+      setSelectedCallId(null);
+      setCallDetail(null);
+      setDetailState("idle");
+      setDetailError(null);
+      setProcessState("idle");
+      setProcessError(null);
+      setPollingStatusMessage(null);
+      setActionRequestError(null);
+      setCalls((current) => current.filter((item) => item.id !== call.id));
+    } catch (error) {
+      setProcessError(error instanceof Error ? error.message : "The failed attempt could not be deleted.");
+    } finally {
+      setDeletingCallId(null);
+    }
   };
 
   const settleProcessingPoll = async (callId: string, selectionGeneration: number) => {
@@ -843,7 +878,9 @@ export default function App() {
                   progressNotice={pollingStatusMessage}
                   actionRequestState={actionRequestState}
                   actionRequestError={actionRequestError}
+                  deletingCallId={deletingCallId}
                   onProcess={(currentCall) => void handleProcessCall(currentCall, "manual-recovery")}
+                  onDelete={(currentCall) => void handleDeleteCall(currentCall)}
                   onRefreshStatus={() => void refreshCallStatus(callDetail.call.id)}
                   onPropose={() => void runActionRequest(callDetail.call.id, "proposing", `/api/calls/${callDetail.call.id}/actions/propose`)}
                   onDecision={(actionId, decision) => void runActionRequest(
@@ -868,7 +905,9 @@ function CallDetailWorkspace({
   progressNotice,
   actionRequestState,
   actionRequestError,
+  deletingCallId,
   onProcess,
+  onDelete,
   onRefreshStatus,
   onPropose,
   onDecision,
@@ -879,7 +918,9 @@ function CallDetailWorkspace({
   progressNotice: string | null;
   actionRequestState: ActionRequestState;
   actionRequestError: string | null;
+  deletingCallId: string | null;
   onProcess: (call: CallRecord) => void;
+  onDelete: (call: CallRecord) => void;
   onRefreshStatus: () => void;
   onPropose: () => void;
   onDecision: (actionId: string, decision: "approve" | "reject") => void;
@@ -952,8 +993,11 @@ function CallDetailWorkspace({
           errorMessage={visibleError ?? (processState === "error" ? "The saved call needs attention before its workflow outcome can be confirmed." : null)}
           progressNotice={progressNotice}
           canRetry={canProcess}
+          canDelete={call.status === "FAILED" || call.status === "NEEDS_REVIEW"}
+          isDeleting={deletingCallId === call.id}
           forceAttention={forceProgressAttention}
           onRetry={() => onProcess(call)}
+          onDelete={() => onDelete(call)}
           onRefreshStatus={onRefreshStatus}
         />
       )}

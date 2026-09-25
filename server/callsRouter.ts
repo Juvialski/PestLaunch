@@ -188,6 +188,50 @@ export function createCallsRouter({
     }
   });
 
+  router.delete("/:id", async (request, response) => {
+    const { id } = request.params;
+    if (!UUID_PATTERN.test(id)) {
+      sendError(response, 400, "INVALID_CALL_ID", "Call ID must be a valid UUID.");
+      return;
+    }
+
+    const result = await loadCall(supabase, id);
+    if (result.error) {
+      logger.error("Call deletion could not load the call.", result.error);
+      sendError(response, 503, "CALL_UNAVAILABLE", "The call could not be loaded. Please try again.");
+      return;
+    }
+    if (!result.call) {
+      sendError(response, 404, "CALL_NOT_FOUND", "That call could not be found.");
+      return;
+    }
+    if (result.call.status !== "FAILED" && result.call.status !== "NEEDS_REVIEW") {
+      sendError(response, 409, "CALL_DELETE_NOT_ALLOWED", "Only failed or review-required attempts can be deleted.");
+      return;
+    }
+
+    try {
+      const { data: deleted, error: deleteError } = await supabase
+        .from("calls")
+        .delete()
+        .eq("id", id)
+        .select("id")
+        .maybeSingle();
+
+      if (deleteError || !deleted) {
+        logger.error("Failed call record could not be deleted.", deleteError);
+        sendError(response, 503, "CALL_DELETE_FAILED", "The failed attempt could not be deleted. Please try again.");
+        return;
+      }
+
+      await removeUploadedRecording(supabase, bucketName, result.call.audio_path, logger);
+      response.status(204).end();
+    } catch (error) {
+      logger.error("Failed call deletion request failed.", error);
+      sendError(response, 503, "CALL_DELETE_FAILED", "The failed attempt could not be deleted. Please try again.");
+    }
+  });
+
   router.post("/:id/process", async (request, response) => {
     const { id } = request.params;
     if (!UUID_PATTERN.test(id)) {

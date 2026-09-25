@@ -15,8 +15,11 @@ export function CallProcessingProgress({
   errorMessage,
   progressNotice,
   canRetry,
+  canDelete,
+  isDeleting,
   forceAttention = false,
   onRetry,
+  onDelete,
   onRefreshStatus,
 }: {
   progress: Progress;
@@ -24,8 +27,11 @@ export function CallProcessingProgress({
   errorMessage: string | null;
   progressNotice: string | null;
   canRetry: boolean;
+  canDelete: boolean;
+  isDeleting: boolean;
   forceAttention?: boolean;
   onRetry: () => void;
+  onDelete: () => void;
   onRefreshStatus: () => void;
 }) {
   if (progress.mode === "idle" && !forceAttention) return null;
@@ -62,10 +68,19 @@ export function CallProcessingProgress({
             {attentionStageLabel && <span>Stage needing attention: {attentionStageLabel}.</span>}
           </div>
         </div>
-        {canRetry && (
-          <button className="primary-button processing-retry-button" type="button" onClick={onRetry}>
-            Retry processing
-          </button>
+        {(canRetry || canDelete) && (
+          <div className="processing-attention-actions">
+            {canRetry && (
+              <button className="primary-button processing-retry-button" type="button" onClick={onRetry} disabled={isDeleting}>
+                Retry processing
+              </button>
+            )}
+            {canDelete && (
+              <button className="secondary-button delete-call-button" type="button" onClick={onDelete} disabled={isDeleting}>
+                {isDeleting ? "Deleting…" : "Delete attempt"}
+              </button>
+            )}
+          </div>
         )}
         {progressNotice && (
           <div className="processing-poll-notice" role="status">
