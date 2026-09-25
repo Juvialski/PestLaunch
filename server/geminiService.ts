@@ -12,7 +12,7 @@ import { AiConfigurationError, RecoverableAiError, type AiFailureCategory, type 
 
 export const GEMINI_MODELS = {
   transcription: ["gemini-3.5-transcribe", "gemini-3.8-flash"],
-  reasoning: ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash"],
+  reasoning: ["gemini-3.5-flash-lite", "gemini-3.5-flash"],
 } as const;
 
 const REQUEST_TIMEOUT_MS = 60_000;
@@ -146,6 +146,9 @@ export function createGeminiService(
             {
               model,
               input: analysisPrompt(transcript),
+              generation_config: {
+                thinking_level: "high",
+              },
               response_format: {
                 type: "text",
                 mime_type: "application/json",
