@@ -2,6 +2,10 @@
 
 Interview-focused proof of concept for a semi-autonomous call intelligence workflow inspired by the current PestLaunch sales workflow.
 
+Live demo: https://pestlaunch.onrender.com
+
+Current implementation handoff: [docs/CURRENT_HANDOFF.md](docs/CURRENT_HANDOFF.md)
+
 ## Prototype goal
 
 Demonstrate one reliable end-to-end automation:
@@ -48,7 +52,6 @@ The prototype will detect situations such as:
 2. Gemini 3.7 Flash
 3. Gemini 3.6 Flash
 4. Gemini 3.5 Flash
-5. Gemini 3.5 Flash Lite only as a last-resort low-cost/schema-repair path if useful
 
 Fallbacks are for quota exhaustion, transient provider errors, timeouts, or invalid structured output. The workflow must not retry indefinitely.
 
@@ -70,16 +73,7 @@ Requirements: Node.js 22 or newer and an existing Supabase project.
 
 1. Install dependencies with `npm ci`.
 2. Copy `.env.example` to `.env` and set `SUPABASE_URL` and `SUPABASE_SECRET_KEY` from the Supabase project. Keep the secret key server-side; do not put it in a `VITE_` variable.
-3. Sign in to the Supabase CLI, link the project, apply the migration, and create the configured private bucket:
-
-   ```powershell
-   npx.cmd supabase login
-   npx.cmd supabase link --project-ref <project-ref>
-   npx.cmd supabase db push
-   npx.cmd supabase seed buckets --linked
-   ```
-
-   The migration creates the five prototype tables and their RLS protections. The bucket is `call-recordings`, private, limited to 25 MiB, and restricted to the supported audio MIME types.
+3. The live PestLaunch Supabase project is already initialized with the five prototype tables and the private `call-recordings` bucket. **Do not run `supabase db push` against the live project without first reading `docs/CURRENT_HANDOFF.md`**, because hosted migration history was created directly and does not currently match the repository migration filename.
 4. Run `npm.cmd run dev` and open the Vite URL printed in the terminal.
 
 The API requires Supabase configuration at startup and exits with a clear message if it is missing. The interview prototype has no authentication, so use synthetic recordings only. The browser communicates with the app API and never receives a Supabase secret key.
@@ -101,7 +95,7 @@ Available scripts:
 - `npm.cmd run build` — typecheck and create the production client and server build.
 - `npm.cmd start` — serve the production build on `PORT` (default `3000`).
 
-`render.yaml` defines a single Render Node web service. Set `SUPABASE_URL` and `SUPABASE_SECRET_KEY` in the service environment before deploying.
+`render.yaml` defines a single Render Node web service. The live service requires devDependencies during its build, so the working Render build command is `npm ci --include=dev && npm run build`; this repo setting should be reconciled in the next bounded implementation phase. Runtime configuration uses `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `SUPABASE_STORAGE_BUCKET`, and `GEMINI_API_KEY`.
 
 ## Planning
 
