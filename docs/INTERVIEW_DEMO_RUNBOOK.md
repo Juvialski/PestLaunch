@@ -12,7 +12,7 @@
 
 **ALERT-R1 readiness note (2026-09-25):** Production high-risk email escalation is verified. Fresh call `2c9eb855-22f5-467a-a971-3388d2ffeae8` reached `COMPLAINT` / `HIGH`, Brevo accepted the alert as `SENT`, a provider message ID and send timestamp were persisted, and the configured recipient confirmed receipt. Brevo API IP blocking had to be disabled for the Render request path. Keep the existing analyzed backup read-only; it predates alert delivery and is not the sent-email fixture.
 
-**Readiness note (2026-09-25):** The existing main-tracking Render service is live with ALERT-R1. The primary preserved backup call remains `53d0f8b5-e520-42fb-9c0a-a64fa1212cdd`; do not reprocess or re-approve it. The production Brevo path has been verified separately with a fresh HIGH-risk call and real inbox receipt. Live Gemini analysis can still take longer if stronger reasoning models hit quota/rate limits and fall back, so keep the persisted backup available during the interview.
+**Readiness note (2026-09-25):** The final interview build uses `gemini-3.5-flash-lite` for analysis with high thinking and `gemini-3.5-flash` as a single high-thinking fallback. This replaces the slower multi-model reasoning cascade after a deployed test hit repeated rate limits. The production Brevo path has been verified separately with a real HIGH-risk alert and inbox receipt.
 
 ## Recommended live walkthrough
 

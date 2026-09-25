@@ -209,14 +209,12 @@ Speaker labels and timestamps are desirable but not required for a valid transcr
 
 ### Reasoning / classification
 
-Use this order:
+Current interview route:
 
-1. `gemini-3.8-flash`
-2. `gemini-3.7-flash`
-3. `gemini-3.6-flash`
-4. `gemini-3.5-flash`
+1. `gemini-3.5-flash-lite` with `thinking_level: "high"`
+2. `gemini-3.5-flash` with `thinking_level: "high"` as the bounded fallback
 
-Gemini 3.5 Flash Lite is **not** part of the reasoning fallback chain. Routing and model identifiers are centralized in `server/geminiService.ts`.
+The earlier 3.8 → 3.7 → 3.6 → 3.5 chain was replaced after a deployed retention test exhausted four analysis attempts with `RATE_LIMIT` after transcription had already succeeded. The shorter Flash-Lite-first route is intended to reduce latency and avoid wasting time across several rate-limited model tiers. Routing and model identifiers remain centralized in `server/geminiService.ts`.
 
 Use bounded fallbacks for appropriate failures such as quota/rate limit, timeout, model unavailable, temporary provider errors, or invalid structured output.
 

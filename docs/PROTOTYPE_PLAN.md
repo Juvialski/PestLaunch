@@ -119,13 +119,12 @@ type Transcript = {
 
 ### Stage C — Structured reasoning and classification
 
-Reasoning route:
+Reasoning route for the final interview build:
 
-1. **Gemini 3.8 Flash**
-2. **Gemini 3.7 Flash**
-3. **Gemini 3.6 Flash**
-4. **Gemini 3.5 Flash**
-5. optional **Gemini 3.5 Flash Lite** last-resort path for low-cost retry/schema repair
+1. **Gemini 3.5 Flash-Lite** with **high** thinking
+2. **Gemini 3.5 Flash** with **high** thinking as the bounded fallback
+
+This supersedes the earlier multi-model 3.8/3.7/3.6/3.5 cascade for the interview demo because the broader chain could spend several rate-limited attempts before returning a result.
 
 Fallback should occur for:
 

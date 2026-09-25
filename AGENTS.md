@@ -28,10 +28,10 @@ The prototype is time-boxed. Do not expand scope without explicit instruction.
 3. compatible Flash multimodal fallback only if needed
 
 ### Reasoning
-1. Gemini 3.8 Flash
-2. Gemini 3.7 Flash
-3. Gemini 3.6 Flash
-4. Gemini 3.5 Flash
+1. Gemini 3.5 Flash-Lite with `thinking_level: high`
+2. Gemini 3.5 Flash fallback with `thinking_level: high`
+
+Prefer the Flash-Lite route for the interview demo to reduce latency and avoid exhausting the higher-tier Flash rate limits before a result is produced.
 
 Do not hard-code model logic throughout the codebase. Centralize provider/model routing.
 
